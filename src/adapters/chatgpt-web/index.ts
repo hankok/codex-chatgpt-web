@@ -1060,9 +1060,11 @@ export function createChatGptWebAdapter(
                         "Structured compaction failed and its retained conversation could not be retired",
                       );
                     }
-                    if (handoffError instanceof ChatGptWebAdapterError
-                      && handoffError.code === "compaction_source_unavailable") {
-                      return await runFreshCompactionFallback("source_disappeared_before_handoff");
+                    if (!operatorSignal.aborted) {
+                      console.warn(
+                        `[chatgpt-web] retained compaction failed (${handoffError instanceof Error ? handoffError.message : String(handoffError)}), falling back to fresh compaction`,
+                      );
+                      return await runFreshCompactionFallback("retained_handoff_failed");
                     }
                     throw handoffError;
                   } finally {
@@ -1290,6 +1292,12 @@ export function createChatGptWebAdapter(
                 if (completedOutcome.type === "error") throw completedOutcome.error;
                 if (session.runtime.text.value() !== completedOutcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
+                }
+                if (session.runtime.mode === "tools" && /does not support developer MCPs|Codex Native.*FORBIDDEN|Codex Native 执行器仍然被宿主禁用|does not currently expose the Codex Native execution tool|blocked at the harness level/i.test(completedOutcome.answer)) {
+                  throw new ChatGptWebAdapterError(
+                    "ChatGPT conversation does not support developer MCPs; releasing retained conversation.",
+                    { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
+                  );
                 }
                 structuredOutputValidator?.(completedOutcome.answer);
                 if (bufferStructuredOutput) {

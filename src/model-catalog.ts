@@ -44,17 +44,7 @@ function routedModelPriority(
   route: ChatGptWebModelRoute,
   config: AppConfig,
 ): number | undefined {
-  const priority = modelPriority(template);
-  if (priority === undefined
-    || config.subagentProtocol !== "compatibility-v1"
-    || route.slug !== "chatgpt-web/light") return priority;
-  if (priority === Number.MAX_SAFE_INTEGER) {
-    throw new Error("Native Codex model template priority cannot reserve the Compatibility V1 roster");
-  }
-  // Codex V1 exposes at most five model overrides. Keep the native Sol row plus the four useful
-  // delegated Web efforts (Medium, High, Extra High, Pro); Instant remains a selectable root model
-  // but does not displace Pro from spawn_agent's bounded registry.
-  return priority + 1;
+  return route.slug === "chatgpt-web/light" ? 13 : route.slug === "chatgpt-web/medium" ? 14 : 15;
 }
 
 function nativeTemplateCandidate(value: unknown, requireTools: boolean): value is JsonObject {

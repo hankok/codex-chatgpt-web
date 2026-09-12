@@ -462,7 +462,7 @@ export async function runChatGptMcpServer(options: {
       const claimed = await callTurnBroker<Omit<ClaimedTurn, "activityId">>(
         options.brokerSocketPath,
         { method: "claim", token: turnToken, activityId, contract },
-        contract === "safe" ? null : 5_000,
+        contract === "safe" ? null : 30_000,
         extra.signal,
       );
       return { ...claimed, activityId };
@@ -487,7 +487,7 @@ export async function runChatGptMcpServer(options: {
           method: "activity_complete",
           token: turnToken,
           activityId,
-        }, 5_000);
+        }, 15_000);
         return;
       } catch (error) {
         firstError ??= error;

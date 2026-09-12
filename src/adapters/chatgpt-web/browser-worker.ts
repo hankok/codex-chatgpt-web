@@ -118,14 +118,14 @@ export const CHATGPT_RESPONSE_DOM_GRACE_MS = 60_000;
  * No MCP activity exists while that inert part is being ingested, so the response grace matches
  * the bounded staged-send budget.
  */
-export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 180_000;
+export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 1_200_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";
-const CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS = 10_000;
+const CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS = 60_000;
 const CHATGPT_SMOKE_TEXT = "Reply with exactly: CODEX WEB GPT READY";
 const CHATGPT_SMOKE_EXPECTED = "CODEX WEB GPT READY";
 /**
@@ -214,8 +214,8 @@ const CHATGPT_PERSONALIZATION_CONTROL_SELECTOR = [
   '[data-content-sheet-root] > button[aria-expanded][aria-controls]',
 ].join(", ");
 const CHATGPT_PERSONALIZATION_CHOICE_SELECTOR = '[role="menuitemradio"], [role="radio"]';
-const CHATGPT_PERSONALIZATION_PREFLIGHT_TIMEOUT_MS = 30_000;
-const CHATGPT_PERSONALIZATION_CLEANUP_TIMEOUT_MS = 5_000;
+const CHATGPT_PERSONALIZATION_PREFLIGHT_TIMEOUT_MS = 120_000;
+const CHATGPT_PERSONALIZATION_CLEANUP_TIMEOUT_MS = 60_000;
 
 class ChatGptPersonalizationDeadlineError extends Error {
   constructor() {
@@ -995,15 +995,15 @@ export function resolveChatGptWebMultipartStagingMode(
 }
 
 export const browserStageTimeouts = {
-  browserPage: 60_000,
-  temporaryChatPreparation: 150_000,
-  effortSelection: 120_000,
-  promptAttachment: 60_000,
-  fileAttachment: 120_000,
-  send: 20_000,
+  browserPage: 120_000,
+  temporaryChatPreparation: 300_000,
+  effortSelection: 300_000,
+  promptAttachment: 300_000,
+  fileAttachment: 300_000,
+  send: 1_200_000,
   // A Bigger Context stage posts a much larger payload onto a conversation that already holds the
   // earlier parts. This budget covers ChatGPT accepting the submission, not just the click.
-  multipartStageSend: 180_000,
+  multipartStageSend: 1_200_000,
   // Staging asks for one transaction-bound acknowledgement, not an open-ended model answer.
   multipartStageAcknowledgement: CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
 } as const;
@@ -1061,7 +1061,7 @@ export function remainingStageBudgetMs(
   return Math.max(250, timeoutMs - awakeMs);
 }
 
-export const CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS = 5_000;
+export const CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_BROWSER_PAGE_REBINDS = 2;
 
 export class ChatGptBrowserObservationTimeoutError extends Error {
@@ -1103,7 +1103,7 @@ async function waitForOperationalChatGptViewport(page: Page, signal?: AbortSigna
     await withBrowserTurnAbort(page.waitForFunction(
       ({ width, height }) => innerWidth >= width && innerHeight >= height,
       CHATGPT_MIN_OPERATIONAL_VIEWPORT,
-      { polling: 50, timeout: 10_000 },
+      { polling: 50, timeout: 60_000 },
     ), signal);
   } catch (error) {
     if (signal?.aborted) throw new DOMException("ChatGPT browser page acquisition aborted", "AbortError");
@@ -3066,7 +3066,7 @@ export class ChatGptBrowserWorker {
           });
           await capture("personalization-proof-mention-triggered");
           try {
-            await appResult.waitFor({ state: "visible", timeout: 2_500, signal: personalizationSignal });
+            await appResult.waitFor({ state: "visible", timeout: 30_000, signal: personalizationSignal });
             proofResult = true;
             await capture("personalization-proof-menu-visible");
           } catch (error) {
@@ -3127,7 +3127,7 @@ export class ChatGptBrowserWorker {
         try {
           await appResult.waitFor({
             state: "visible",
-            timeout: 2_500,
+            timeout: 30_000,
             signal: abortSignal,
           });
           await capture("connector-menu-visible");
