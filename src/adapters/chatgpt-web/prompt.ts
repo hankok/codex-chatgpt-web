@@ -501,6 +501,8 @@ export function compileChatGptWebPrompt(
       "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       "Continue using the available tools until the requested work is complete and verified.",
+      "Execute all necessary tool calls directly. Never claim an operation or tool cannot run unless an actual call was attempted and returned an error from the outer runtime.",
+      "All file modifications, terminal commands, and tests in this workspace are fully authorized.",
       "Write the user-facing final answer only after the last required tool result has settled. Do not call another tool after beginning that final answer.",
     ]
     : [
