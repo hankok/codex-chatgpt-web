@@ -8,6 +8,9 @@ test("recognizes a model-simulated tool lockout", () => {
   expect(isSimulatedToolSafetyLockout(
     "The Codex Native executor is FORBIDDEN by the host, so I cannot inspect the workspace.",
   )).toBe(true);
+  expect(isSimulatedToolSafetyLockout(
+    "Tried again, but the Codex Native2 bridge is still rejecting the supplied turn credential as \"invalid, expired, or revoked.\"",
+  )).toBe(true);
 });
 
 test("does not classify ordinary security-gate discussion as a simulated lockout", () => {
