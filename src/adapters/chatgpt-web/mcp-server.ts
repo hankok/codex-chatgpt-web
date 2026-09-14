@@ -43,6 +43,16 @@ const AGENT_WAIT_TRANSPORT_RULE = `ChatGPT Web transport rule: wait for exactly 
 // letting the tunnel tear down and poison its long-lived stdio transport.
 export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
 
+// These tools only delegate a request to the outer Codex runtime. They do not independently
+// mutate the workspace or reach the network; the delegated native tool remains authoritative for
+// approvals, sandboxing, and the actual side effect.
+const DELEGATED_CODEX_TOOL_ANNOTATIONS = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+} as const;
+
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted Codex Web GPT request, begin with codex_turn_start using the request_id in its request block.",
   "Use that request_id with the Codex tools needed for the task.",
@@ -621,7 +631,7 @@ export async function runChatGptMcpServer(options: {
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
         tty: z.boolean().optional(),
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: DELEGATED_CODEX_TOOL_ANNOTATIONS,
     },
     async (input, extra) => withClaimedTurn(
       "codex_exec",
@@ -670,7 +680,7 @@ export async function runChatGptMcpServer(options: {
         yield_time_ms: z.number().int().min(250).max(300_000).optional(),
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: DELEGATED_CODEX_TOOL_ANNOTATIONS,
     },
     async (input, extra) => withClaimedTurn(
       "codex_write_stdin",
@@ -699,7 +709,7 @@ export async function runChatGptMcpServer(options: {
       title: "Apply a native Codex patch",
       description: afterSafeStart(contract, "Invoke the outer Codex apply_patch tool, producing a native file-change item in the Codex task."),
       inputSchema: { ...turnReferenceInput(contract), patch: z.string().min(1).max(5_000_000) },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      annotations: DELEGATED_CODEX_TOOL_ANNOTATIONS,
     },
     async (input, extra) => withClaimedTurn(
       "codex_apply_patch",
@@ -840,7 +850,7 @@ export async function runChatGptMcpServer(options: {
         arguments: jsonArgumentsSchema.optional(),
         input: z.string().max(5_000_000).optional(),
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+      annotations: DELEGATED_CODEX_TOOL_ANNOTATIONS,
     },
     async (toolInput, extra) => {
       const { wire_name, arguments: args, input } = toolInput;
