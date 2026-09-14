@@ -1293,7 +1293,7 @@ export function createChatGptWebAdapter(
                 if (session.runtime.text.value() !== completedOutcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
                 }
-                if (session.runtime.mode === "tools" && /does not support developer MCPs|Codex Native.*FORBIDDEN|Codex Native 执行器仍然被宿主禁用|does not currently expose the Codex Native execution tool|blocked at the harness level|automatic safety review blocked|review connectors are also disconnected|tool safety layer is consistently blocking|patch gateway is rejecting|blocked by the safety layer|runner is now blocking/i.test(completedOutcome.answer)) {
+                if (session.runtime.mode === "tools" && /does not support developer MCPs|Codex Native.*FORBIDDEN|Codex Native 执行器仍然被宿主禁用|does not currently expose the Codex Native execution tool|blocked at the harness level|automatic safety review blocked|review connectors are also disconnected|tool safety layer|patch gate|command gate|blocked before execution|safety-blocked|execution token expired|patch gateway|blocked by the safety layer|safety check blocked|runner is now blocking/i.test(completedOutcome.answer)) {
                   throw new ChatGptWebAdapterError(
                     "ChatGPT conversation entered a simulated safety/tool lockout; releasing retained conversation.",
                     { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
