@@ -218,7 +218,7 @@ function tunnelCommandQuoted(value: string): string {
   return `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
 }
 
-export function mcpCommand(config: AppConfig, platform = process.platform): string {
+export function mcpCommand(config: AppConfig, _platform = process.platform): string {
   const contract = config.browserInteractionMode === "manual" ? "safe" : "native";
   const command = [
     ...config.runtimeCommand,
@@ -228,10 +228,7 @@ export function mcpCommand(config: AppConfig, platform = process.platform): stri
     "--broker-socket",
     config.brokerSocketPath,
   ];
-  if (platform === "win32") {
-    return command.map(tunnelCommandQuoted).join(" ");
-  }
-  return command.map(shellQuote).join(" ");
+  return command.map(tunnelCommandQuoted).join(" ");
 }
 
 function tunnel(config: AppConfig): TunnelConfig {

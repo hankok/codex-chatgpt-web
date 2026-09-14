@@ -158,6 +158,7 @@ export async function runDoctor(): Promise<DoctorReport> {
   }
 
   const service = getServiceStatus();
+  const serviceOs = process.platform === "darwin" ? "macOS" : process.platform === "linux" ? "systemd" : "OS";
   if (config.browserHost === "launcher") {
     checks.push(service.installed || service.loaded
       ? {
@@ -170,9 +171,9 @@ export async function runDoctor(): Promise<DoctorReport> {
   } else if (!service.supported) {
     checks.push({ id: "service", status: "warning", message: "Managed service is unavailable on this OS; keep `serve` running manually" });
   } else if (!service.installed || !service.loaded) {
-    checks.push({ id: "service", status: "error", message: "macOS background service is not installed and loaded" });
+    checks.push({ id: "service", status: "error", message: `${serviceOs} background service is not installed and loaded` });
   } else {
-    checks.push({ id: "service", status: "ok", message: "macOS background service is loaded" });
+    checks.push({ id: "service", status: "ok", message: `${serviceOs} background service is loaded` });
   }
   checks.push(await proxyCheck(config));
 
@@ -200,10 +201,12 @@ export async function runDoctor(): Promise<DoctorReport> {
             detail: JSON.stringify(tunnelService),
           }
         : { id: "tunnel-service", status: "ok", message: "Launcher owns the tunnel runtime" });
-    } else {
+    } else if (tunnelService.supported) {
       checks.push(tunnelService.installed && tunnelService.loaded && tunnelService.running
-        ? { id: "tunnel-service", status: "ok", message: "macOS tunnel service is installed, loaded, and running" }
-        : { id: "tunnel-service", status: "error", message: "macOS tunnel service is not fully running", detail: JSON.stringify(tunnelService) });
+        ? { id: "tunnel-service", status: "ok", message: `${serviceOs} tunnel service is installed, loaded, and running` }
+        : { id: "tunnel-service", status: "error", message: `${serviceOs} tunnel service is not fully running`, detail: JSON.stringify(tunnelService) });
+    } else {
+      checks.push({ id: "tunnel-service", status: "ok", message: "Tunnel runtime is managed without an OS service" });
     }
     const runtime = tunnelStatus(config);
     checks.push(runtime.ok

@@ -6,6 +6,7 @@ import { assertDurableRuntimeCommand, atomicWriteFile, getConfigDir } from "./co
 import { runCommand, runChecked } from "./process";
 
 const LABEL = "io.github.codex-chatgpt-web.daemon";
+const SYSTEMD_USER_SERVICE = "codex-chatgpt-web.service";
 
 export interface ServiceStatus {
   supported: boolean;
@@ -26,6 +27,10 @@ function xml(value: string): string {
 
 function plistPath(): string {
   return join(homedir(), "Library", "LaunchAgents", `${LABEL}.plist`);
+}
+
+function systemdServicePath(): string {
+  return join(homedir(), ".config", "systemd", "user", SYSTEMD_USER_SERVICE);
 }
 
 function launchDomain(): string {
@@ -101,16 +106,31 @@ function assertMacOs(): void {
 }
 
 export function getServiceStatus(): ServiceStatus {
-  if (process.platform !== "darwin") return { supported: false, installed: false, loaded: false, label: LABEL };
-  const path = plistPath();
-  const result = runCommand("launchctl", ["print", serviceTarget()]);
-  return {
-    supported: true,
-    installed: existsSync(path),
-    loaded: result.status === 0,
-    label: LABEL,
-    definitionPath: path,
-  };
+  if (process.platform === "darwin") {
+    const path = plistPath();
+    const result = runCommand("launchctl", ["print", serviceTarget()]);
+    return {
+      supported: true,
+      installed: existsSync(path),
+      loaded: result.status === 0,
+      label: LABEL,
+      definitionPath: path,
+    };
+  }
+  if (process.platform === "linux") {
+    const path = systemdServicePath();
+    const installed = existsSync(path);
+    const active = runCommand("systemctl", ["--user", "is-active", "--quiet", SYSTEMD_USER_SERVICE]).status === 0;
+    const loaded = active || (installed && runCommand("systemctl", ["--user", "show", "-p", "LoadState", "--value", SYSTEMD_USER_SERVICE]).stdout.trim() === "loaded");
+    return {
+      supported: true,
+      installed,
+      loaded,
+      label: SYSTEMD_USER_SERVICE,
+      definitionPath: path,
+    };
+  }
+  return { supported: false, installed: false, loaded: false, label: LABEL };
 }
 
 export function installService(config: AppConfig): ServiceStatus {
@@ -127,6 +147,10 @@ export function installService(config: AppConfig): ServiceStatus {
 }
 
 export function startService(): ServiceStatus {
+  if (process.platform === "linux") {
+    runChecked("systemctl", ["--user", "start", SYSTEMD_USER_SERVICE]);
+    return getServiceStatus();
+  }
   assertMacOs();
   const path = plistPath();
   if (!existsSync(path)) throw new Error(`Service is not installed: ${path}`);
@@ -265,6 +289,16 @@ export async function assertServiceIdle(config: AppConfig): Promise<void> {
 }
 
 export async function restartService(config: AppConfig): Promise<ServiceStatus> {
+  if (process.platform === "linux") {
+    if (!getServiceStatus().loaded) return startService();
+    const lease = await acquireDrain(config);
+    try {
+      runChecked("systemctl", ["--user", "restart", SYSTEMD_USER_SERVICE]);
+    } catch (error) {
+      return releaseDrainAfterFailure(lease, error);
+    }
+    return getServiceStatus();
+  }
   assertMacOs();
   if (!getServiceStatus().loaded) return startService();
   const lease = await acquireDrain(config);
@@ -289,6 +323,17 @@ export function removeLegacyRuntimeArtifacts(config: AppConfig): void {
 }
 
 export async function stopService(config: AppConfig): Promise<ServiceStatus> {
+  if (process.platform === "linux") {
+    if (getServiceStatus().loaded) {
+      const lease = await acquireDrain(config);
+      try {
+        runChecked("systemctl", ["--user", "stop", SYSTEMD_USER_SERVICE]);
+      } catch (error) {
+        return releaseDrainAfterFailure(lease, error);
+      }
+    }
+    return getServiceStatus();
+  }
   assertMacOs();
   if (getServiceStatus().loaded) {
     const lease = await acquireDrain(config);
@@ -303,6 +348,20 @@ export async function stopService(config: AppConfig): Promise<ServiceStatus> {
 }
 
 export async function uninstallService(config: AppConfig): Promise<ServiceStatus> {
+  if (process.platform === "linux") {
+    if (getServiceStatus().loaded) {
+      const lease = await acquireDrain(config);
+      try {
+        runChecked("systemctl", ["--user", "stop", SYSTEMD_USER_SERVICE]);
+        runChecked("systemctl", ["--user", "disable", SYSTEMD_USER_SERVICE]);
+      } catch (error) {
+        return releaseDrainAfterFailure(lease, error);
+      }
+    }
+    rmSync(systemdServicePath(), { force: true });
+    runCommand("systemctl", ["--user", "daemon-reload"]);
+    return getServiceStatus();
+  }
   assertMacOs();
   if (getServiceStatus().loaded) {
     const lease = await acquireDrain(config);
