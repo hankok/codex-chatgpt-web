@@ -11,6 +11,15 @@ test("recognizes a model-simulated tool lockout", () => {
   expect(isSimulatedToolSafetyLockout(
     "Tried again, but the Codex Native2 bridge is still rejecting the supplied turn credential as \"invalid, expired, or revoked.\"",
   )).toBe(true);
+  expect(isSimulatedToolSafetyLockout(
+    "Retry failed again before reaching the repo: Native2 rejects both execution and tool discovery with \"turn token is invalid, expired, or revoked.\" The wave-radar workspace connector is also disconnected, while the other available Codex workspace points to a different repository.",
+  )).toBe(true);
+  expect(isSimulatedToolSafetyLockout(
+    "Retry still fails before reaching the repo: Native2 returns \"turn token is invalid, expired, or revoked.\" The wave-radar workspace fallback also currently returns \"We couldn't connect your account.\"",
+  )).toBe(true);
+  expect(isSimulatedToolSafetyLockout(
+    "I can’t write through the broken Codex bridge, but I can still verify the current main source if the repository is publicly readable.",
+  )).toBe(true);
 });
 
 test("does not classify ordinary security-gate discussion as a simulated lockout", () => {

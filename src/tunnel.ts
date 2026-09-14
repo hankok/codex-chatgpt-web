@@ -352,13 +352,24 @@ export function tunnelConnectLaunchError(output: string): string | undefined {
   ].join("; "));
 }
 
-export function parseTunnelStatus(output: string, exitStatus = 0): TunnelRuntimeStatus {
+function isTunnelServiceActive(): boolean {
+  if (process.platform === "linux") {
+    return runCommand("systemctl", ["--user", "is-active", "--quiet", "codex-chatgpt-web-tunnel.service"]).status === 0;
+  }
+  if (process.platform === "darwin") {
+    const result = runCommand("launchctl", ["print", `gui/${process.getuid?.() ?? 0}/io.github.codex-chatgpt-web.tunnel`]);
+    return result.status === 0 && /^\s*state = running\s*$/m.test(result.stdout);
+  }
+  return false;
+}
+
+export function parseTunnelStatus(output: string, exitStatus = 0, serviceRunning = false): TunnelRuntimeStatus {
   if (exitStatus !== 0) {
     return { ok: false, processRunning: false, healthy: false, ready: false, detail: safeTunnelDetail(output) };
   }
   try {
     const parsed = JSON.parse(output) as Record<string, unknown>;
-    const processRunning = parsed.process_running === true;
+    const processRunning = parsed.process_running === true || serviceRunning;
     const healthy = parsed.healthy === true;
     const ready = parsed.ready === true;
     const state = typeof parsed.runtime_state === "string" ? parsed.runtime_state
@@ -397,7 +408,7 @@ export function tunnelStatus(config: AppConfig): TunnelRuntimeStatus {
     ["runtimes", "status", settings.alias, "--json"],
     { timeout: 10_000 },
   );
-  return parseTunnelStatus(tunnelCommandOutput(result), result.status);
+  return parseTunnelStatus(tunnelCommandOutput(result), result.status, isTunnelServiceActive());
 }
 
 export async function waitForTunnelReady(
