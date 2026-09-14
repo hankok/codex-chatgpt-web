@@ -43,6 +43,17 @@ test("Zero Risk prompt carries only a neutral request id while MCP metadata owns
   expect(compiled.text).not.toContain("ChatGPT Web Medium with no Codex Native bridge");
 });
 
+test("tool prompts defer approvals to the outer runtime without blanket authorization claims", () => {
+  const compiled = compileChatGptWebPrompt(request(), capabilities, requestId, {
+    manualControl: true,
+  });
+
+  expect(compiled.text).toContain("outer Codex runtime performs the call and applies its current approval and sandbox policy");
+  expect(compiled.text).not.toContain("all shell commands without restriction");
+  expect(compiled.text).not.toContain("fully authorized");
+  expect(compiled.text).not.toContain("including chained commands with ';' or '&&'");
+});
+
 test("Zero Risk compaction prompt stays task-focused while MCP metadata owns completion", () => {
   const compiled = compileChatGptWebPrompt(request(true), capabilities, requestId, {
     manualControl: true,
