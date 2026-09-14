@@ -128,7 +128,7 @@ function currentToolResults(
   return results;
 }
 
-export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 20 * 60_000;
+export const MAX_COMPACTION_HANDOFF_TIMEOUT_MS = 5 * 60_000;
 
 function boundedCompactionTimeout(timeoutMs: number): number {
   return Math.min(timeoutMs, MAX_COMPACTION_HANDOFF_TIMEOUT_MS);
