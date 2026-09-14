@@ -1,5 +1,5 @@
 const LEGACY_TOOL_LOCKOUT = /does not support developer MCPs|Codex Native.*FORBIDDEN|Codex Native 执行器仍然被宿主禁用|does not currently expose the Codex Native execution tool|blocked at the harness level/i;
-const SAFETY_GATE = /automatic safety review|tool safety layer|patch gate(?:way)?|command gate|safety check|runner|turn (?:credential|token)|native2?(?:\s+(?:bridge|executor|connector|action|call|route))?|workspace connector|codex bridge/i;
+const SAFETY_GATE = /automatic safety review|tool safety layer|patch gate(?:way)?|command gate|safety check|runner|turn[-\s](?:credential|token)|execution layer|native2?(?:\s+(?:bridge|executor|connector|action|call|route))?|workspace connector|codex bridge/i;
 const LOCKOUT_OUTCOME = /block(?:ed|ing)|reject(?:ed|ing|s)?|prevent(?:ed|ing|s)?|fail(?:ed|ing|s)?|cannot|can't|unable|forbidden|expired|revoked|invalid|disconnected|broken/i;
 
 export function isSimulatedToolSafetyLockout(answer: string): boolean {

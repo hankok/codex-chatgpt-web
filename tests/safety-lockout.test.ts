@@ -20,6 +20,9 @@ test("recognizes a model-simulated tool lockout", () => {
   expect(isSimulatedToolSafetyLockout(
     "I can’t write through the broken Codex bridge, but I can still verify the current main source if the repository is publicly readable.",
   )).toBe(true);
+  expect(isSimulatedToolSafetyLockout(
+    "I couldn’t complete the push/deploy because the Codex execution layer rejected every Git mutation (`git add`/`commit`) before execution with a turn-token error.",
+  )).toBe(true);
 });
 
 test("does not classify ordinary security-gate discussion as a simulated lockout", () => {
