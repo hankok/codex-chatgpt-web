@@ -282,6 +282,39 @@ export function withoutSupersededModelSwitchContracts(messages: readonly CodexMe
   return messages.filter((_message, index) => !dropped.has(index));
 }
 
+function withoutAutomaticCodexWithChatGptWorkspaceSection(content: string): string {
+  const lines = content.split("\n");
+  const headingIndex = lines.findIndex(line => line.trim() === "## Codex with ChatGPT");
+  if (headingIndex < 0) return content;
+
+  const sectionText = lines.slice(headingIndex).join("\n");
+  if (!sectionText.includes("codex-with-chatgpt")) return content;
+
+  let endIndex = lines.length;
+  for (let index = headingIndex + 1; index < lines.length; index += 1) {
+    const line = lines[index]!.trim();
+    if (/^##\s+/.test(line) || line === "</INSTRUCTIONS>" || line === "--- project-doc ---") {
+      endIndex = index;
+      break;
+    }
+  }
+
+  const before = lines.slice(0, headingIndex);
+  const after = lines.slice(endIndex);
+  while (before.at(-1) === "" && after[0] === "") before.pop();
+  return [...before, ...after].join("\n");
+}
+
+function withoutAutomaticCodexWithChatGptWorkspaceRequirement(
+  messages: readonly CodexMessage[],
+): CodexMessage[] {
+  return messages.map(message => {
+    if (message.role !== "developer" || typeof message.content !== "string") return message;
+    const content = withoutAutomaticCodexWithChatGptWorkspaceSection(message.content);
+    return content === message.content ? message : { ...message, content };
+  });
+}
+
 function messageEnvelope(
   message: CodexMessage,
   images: ChatGptWebPromptImage[],
@@ -668,7 +701,9 @@ export function compileChatGptWebPrompt(
     return { text, images };
   };
 
-  let sourceMessages = withoutSupersededModelSwitchContracts(parsed.context.messages);
+  let sourceMessages = withoutAutomaticCodexWithChatGptWorkspaceRequirement(
+    withoutSupersededModelSwitchContracts(parsed.context.messages),
+  );
   const initialMessageCount = sourceMessages.length;
   let compiled = build(sourceMessages);
   if (!parsed._compactionRequest) return compiled;

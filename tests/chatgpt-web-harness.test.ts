@@ -829,6 +829,25 @@ describe("ChatGPT outer-native harness v4", () => {
     expect(() => chatGptTurnExecutionKey(parsed(environmentXml))).toThrow("requires native Codex turn_id metadata");
   });
 
+  test("keeps retry identity stable when Codex regenerates message item ids", () => {
+    const first = canonicalCurrentWireRequest(environmentXml);
+    const retry = structuredClone(first);
+    const retryInput = (retry._rawBody as { input: Array<Record<string, unknown>> }).input;
+    retryInput[1]!.id = "msg_environment_retry";
+    retryInput[2]!.id = "msg_instruction_retry";
+
+    expect(chatGptTurnExecutionKey(retry)).toBe(chatGptTurnExecutionKey(first));
+    expect(chatGptInstructionLineage(retry).current).toBe(chatGptInstructionLineage(first).current);
+
+    const steered = structuredClone(retry);
+    const steeredInput = (steered._rawBody as { input: Array<Record<string, unknown>> }).input;
+    steeredInput.push({ ...structuredClone(steeredInput[2]!), id: "msg_instruction_steered" });
+
+    expect(chatGptTurnExecutionKey(steered)).not.toBe(chatGptTurnExecutionKey(retry));
+    expect(chatGptInstructionLineage(steered).current).not.toBe(chatGptInstructionLineage(retry).current);
+    expect(chatGptInstructionLineage(steered).predecessors).toContain(chatGptInstructionLineage(retry).current);
+  });
+
   test("coalesces provider retries onto one browser runtime and preserves outstanding calls", () => {
     const sessions = new ChatGptTurnSessions();
     let starts = 0;
@@ -1029,10 +1048,11 @@ describe("ChatGPT outer-native harness v4", () => {
       });
     };
     try {
+      const request = canonicalCurrentWireRequest(environmentXml);
       const disconnect = new AbortController();
       const firstEvents: AdapterEvent[] = [];
       const first = createChatGptWebAdapter(provider).runTurn!(
-        rawWireRequest(environmentXml),
+        request,
         { headers: new Headers(), abortSignal: disconnect.signal },
         event => firstEvents.push(event),
       );
@@ -1042,9 +1062,13 @@ describe("ChatGPT outer-native harness v4", () => {
       await expect(first).rejects.toThrow("ChatGPT web turn aborted");
       expect(firstEvents.some(event => event.type === "text_delta" && event.text === "Recovered ")).toBeTrue();
 
+      const retry = structuredClone(request);
+      const retryInput = (retry._rawBody as { input: Array<Record<string, unknown>> }).input;
+      retryInput[1]!.id = "msg_environment_retry";
+      retryInput[2]!.id = "msg_instruction_retry";
       const events: AdapterEvent[] = [];
       const reconnect = createChatGptWebAdapter(provider).runTurn!(
-        rawWireRequest(environmentXml),
+        retry,
         { headers: new Headers() },
         event => events.push(event),
       );

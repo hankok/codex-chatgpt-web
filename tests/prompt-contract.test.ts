@@ -96,6 +96,46 @@ test("read-only prompts resume without exposing a bind capability", () => {
   expect(compiled.text).not.toContain("CODEX_INTERNAL_CONTEXT_COMPACT");
 });
 
+test("ChatGPT Web strips the automatic workspace C2C requirement but keeps adjacent rules and explicit user requests", () => {
+  const parsed = request("high");
+  parsed.context.messages = [
+    {
+      role: "developer",
+      content: [
+        "# AGENTS.md instructions for D:\\GitHub",
+        "",
+        "<INSTRUCTIONS>",
+        "## Keep Before",
+        "Preserve this workspace rule.",
+        "",
+        "## Codex with ChatGPT",
+        "For every non-trivial coding task, automatically invoke and follow the `codex-with-chatgpt` skill.",
+        "Use the configured ChatGPT connection for planning and review.",
+        "",
+        "## Keep After",
+        "Preserve this second workspace rule.",
+        "</INSTRUCTIONS>",
+      ].join("\n"),
+      timestamp: 1,
+    },
+    { role: "user", content: "Use Codex with ChatGPT explicitly for this task.", timestamp: 2 },
+  ];
+
+  const compiled = compileChatGptWebPrompt(
+    parsed,
+    { localToolsEnabled: true, solAvailable: true, proAvailable: true },
+    "turn_12345678901234567890123456789012",
+  );
+
+  expect(compiled.text).toContain("## Keep Before");
+  expect(compiled.text).toContain("Preserve this workspace rule.");
+  expect(compiled.text).toContain("## Keep After");
+  expect(compiled.text).toContain("Preserve this second workspace rule.");
+  expect(compiled.text).not.toContain("For every non-trivial coding task, automatically invoke and follow the `codex-with-chatgpt` skill.");
+  expect(compiled.text).not.toContain("Use the configured ChatGPT connection for planning and review.");
+  expect(compiled.text).toContain("Use Codex with ChatGPT explicitly for this task.");
+});
+
 test("Bigger Context sends three semantic record envelopes and starts work from the final part", () => {
   const token = "turn_12345678901234567890123456789012";
   const parsed = request("high");

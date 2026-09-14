@@ -184,6 +184,20 @@ function compactionInputRevision(parsed: CodexParsedRequest): unknown[] {
   return input;
 }
 
+function chatGptCanonicalInstructionHistory(parsed: CodexParsedRequest): unknown[] {
+  return chatGptTurnUserRevisionHistory(parsed).map(revision => revision.content);
+}
+
+function chatGptCanonicalRoundInput(input: unknown[]): unknown[] {
+  return input.map(value => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const item = value as Record<string, unknown>;
+    if (item.type !== "message" || !("id" in item)) return value;
+    const { id: _volatileMessageId, ...canonical } = item;
+    return canonical;
+  });
+}
+
 export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
   const identity = extractChatGptTurnIdentity(parsed);
   if (!identity.turnId) throw new Error("ChatGPT web requires native Codex turn_id metadata for browser-session replay");
@@ -194,7 +208,7 @@ export function chatGptTurnExecutionKey(parsed: CodexParsedRequest): string {
     revision: parsed._compactionRequest
       ? compactionInputRevision(parsed)
       : extractChatGptTurnUserRevision(parsed),
-    ...(!parsed._compactionRequest ? { instructionId: chatGptTurnUserRevisionHistory(parsed).at(-1)?.itemId } : {}),
+    ...(!parsed._compactionRequest ? { instructionHistory: chatGptCanonicalInstructionHistory(parsed) } : {}),
   });
 }
 
@@ -204,8 +218,11 @@ export interface ChatGptInstructionLineage {
 }
 
 export function chatGptInstructionLineage(parsed: CodexParsedRequest): ChatGptInstructionLineage {
-  const revisions = chatGptTurnUserRevisionHistory(parsed).map(revision => createHash("sha256")
-    .update(JSON.stringify([revision.itemId ?? null, revision.content])).digest("hex"));
+  const history: unknown[] = [];
+  const revisions = chatGptTurnUserRevisionHistory(parsed).map(revision => {
+    history.push(revision.content);
+    return createHash("sha256").update(JSON.stringify(history)).digest("hex");
+  });
   const current = revisions.pop();
   if (!current) throw new Error("ChatGPT web requires a canonical user instruction");
   return { current, predecessors: new Set(revisions) };
@@ -224,7 +241,7 @@ export function chatGptTurnRoundKey(parsed: CodexParsedRequest): string {
     threadId: identity.threadId,
     turnId: identity.turnId,
     purpose: parsed._compactionRequest ? "compaction" : "response",
-    input: (body as { input: unknown[] }).input,
+    input: chatGptCanonicalRoundInput((body as { input: unknown[] }).input),
   });
 }
 
@@ -263,7 +280,7 @@ export function chatGptCompactionSourceExecutionKey(parsed: CodexParsedRequest):
     turnId: source.turnId ?? identity.turnId,
     purpose: "response",
     revision: source.content,
-    instructionId: source.itemId,
+    instructionHistory: chatGptCanonicalInstructionHistory(parsed),
   });
 }
 
