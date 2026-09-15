@@ -37,7 +37,9 @@ const turnTokenSchema = z.string().min(20).max(256);
 const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 // Match Codex's default wait interval while returning before the MCP invocation deadline.
 export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 30_000;
+export const CHATGPT_WEB_COMMAND_SESSION_POLL_MS = 30_000;
 const AGENT_WAIT_TRANSPORT_RULE = `ChatGPT Web transport rule: wait for exactly ${CHATGPT_WEB_AGENT_WAIT_POLL_MS / 1_000} seconds per call, matching the Codex default, then release the MCP channel so spawned Web agents can use their own tools. A wait timeout is not task completion; check agent progress and wait again if needed. Keep the native tool's declared arguments.`;
+const COMMAND_SESSION_POLL_TRANSPORT_RULE = `ChatGPT Web transport rule: poll command sessions for at most ${CHATGPT_WEB_COMMAND_SESSION_POLL_MS / 1_000} seconds per call, then poll again if the command is still running. Longer polls can outlive the MCP invocation deadline and retire the active turn capability.`;
 // The OpenAI tunnel currently owns a two-minute command-response deadline. The local MCP server
 // must settle first so an abandoned native tool call is returned as an MCP error instead of
 // letting the tunnel tear down and poison its long-lived stdio transport.
@@ -672,12 +674,15 @@ export async function runChatGptMcpServer(options: {
     "codex_write_stdin",
     {
       title: "Continue a native Codex command session",
-      description: afterSafeStart(contract, "Write characters to, or poll, a session_id returned by codex_exec."),
+      description: afterSafeStart(
+        contract,
+        `Write characters to, or poll, a session_id returned by codex_exec.\n\n${COMMAND_SESSION_POLL_TRANSPORT_RULE}`,
+      ),
       inputSchema: {
         ...turnReferenceInput(contract),
         session_id: z.number().int().nonnegative(),
         chars: z.string().max(1_000_000).optional(),
-        yield_time_ms: z.number().int().min(250).max(300_000).optional(),
+        yield_time_ms: z.number().int().min(250).max(CHATGPT_WEB_COMMAND_SESSION_POLL_MS).optional(),
         max_output_tokens: z.number().int().min(1).max(1_000_000).optional(),
       },
       annotations: DELEGATED_CODEX_TOOL_ANNOTATIONS,

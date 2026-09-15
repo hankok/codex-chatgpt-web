@@ -122,6 +122,10 @@ export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 1_200_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
+// Tool-capable turns need a longer quiet window before the browser commits completion. A delayed
+// MCP claim can otherwise arrive after the ordinary DOM settle window and find its turn already
+// retired. Read-only turns keep the shorter window so their latency is unchanged.
+export const CHATGPT_TOOL_COMPLETION_SETTLE_MS = 30_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";
@@ -1437,6 +1441,10 @@ export class ChatGptCompletionTracker {
     }
     return now - this.candidate.since >= this.stableMs;
   }
+}
+
+export function chatGptCompletionSettleMs(toolCapable: boolean): number {
+  return toolCapable ? CHATGPT_TOOL_COMPLETION_SETTLE_MS : CHATGPT_COMPLETION_SETTLE_MS;
 }
 
 export class ChatGptTurnDomHealthTracker {
@@ -4693,7 +4701,9 @@ export class ChatGptBrowserWorker {
         this.attachFiles(page, prepared)
       ));
       await diagnostics.capture(page, "file-attachment-complete");
-      const completionTracker = new ChatGptCompletionTracker();
+      const completionTracker = new ChatGptCompletionTracker(
+        chatGptCompletionSettleMs(turn.externalProgress !== undefined),
+      );
       const finalSubmissionEvidence = await this.runStage(
         turn.traceId,
         "send",

@@ -22,7 +22,7 @@ import { MAX_CHATGPT_WEB_TURN_RETRIES } from "../src/adapters/chatgpt-web/retry-
 import { ChatGptTextFeed, ChatGptTraceFeed, ChatGptTurnSessions, chatGptCompactionSourceExecutionKey, chatGptInstructionLineage, chatGptThreadOwnershipKey, chatGptTurnExecutionKey, chatGptTurnSessions } from "../src/adapters/chatgpt-web/turn-execution";
 import { callTurnBroker, TurnBroker, type BrokerToolResult } from "../src/adapters/chatgpt-web/turn-broker";
 import { ChatGptExternalTurnProgress, ChatGptMirroredTurnProgress, chatGptExternalProgressIsLive, chatGptExternalToolCallsAreInFlight } from "../src/adapters/chatgpt-web/turn-progress";
-import { CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "../src/adapters/chatgpt-web/mcp-server";
+import { CHATGPT_WEB_COMMAND_SESSION_POLL_MS, CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS, chatGptMcpInvocationTimeout } from "../src/adapters/chatgpt-web/mcp-server";
 import { defaultBrokerEndpoint } from "../src/config";
 import { estimateChatGptWebUsage } from "../src/adapters/chatgpt-web/usage";
 import { decodeCompactionSummary, SUMMARY_PREFIX } from "../src/responses/compaction";
@@ -2660,7 +2660,7 @@ describe("ChatGPT outer-native harness v4", () => {
       // ChatGPT caches the complete tools/list contract under a connector identity.
       // An intentional hash change therefore requires an explicit connector refresh or identity migration.
       expect(createHash("sha256").update(canonicalJson(publicConnectorAbi)).digest("hex"))
-        .toBe("65e461fd584ad8d191f80f6fb438ae3a93d2431e0b7b495889e762c72b05a31e");
+        .toBe("9a4dfbb622d98ff8bb3ae0edf702af9b8b23753ac0d648f4932b5b51bf4f8f2c");
       for (const tool of listed.tools) {
         const properties = tool.inputSchema.properties as Record<string, unknown>;
         expect(properties.turn_token).toEqual({ type: "string", minLength: 20, maxLength: 256 });
@@ -3072,6 +3072,24 @@ describe("ChatGPT outer-native harness v4", () => {
       }));
       broker.completeTool(token, writeRequest!.callId, toolResult({ output: "continued" }));
       expect((await write).structuredContent).toEqual({ output: "continued" });
+
+      // Command-session polls must settle before the 90-second MCP invocation deadline. Otherwise
+      // invoke() treats the abandoned request as terminal and revokes the whole turn token.
+      const overlongWrite = await call("codex_write_stdin", {
+        turn_token: token,
+        session_id: 42,
+        yield_time_ms: CHATGPT_WEB_COMMAND_SESSION_POLL_MS + 1,
+      });
+      expect(overlongWrite.isError).toBe(true);
+      const inventoryAfterRejectedPoll = await call("codex_tool_inventory", {
+        turn_token: token,
+        query: "exec_command",
+        include_schema: false,
+      });
+      expect(inventoryAfterRejectedPoll.structuredContent).toMatchObject({
+        total: 1,
+        tools: [{ wire_name: "exec_command" }],
+      });
 
       const patch = "*** Begin Patch\n*** Add File: direct-token.txt\n+ok\n*** End Patch";
       const apply = call("codex_apply_patch", { turn_token: token, patch });
