@@ -178,6 +178,11 @@ test("browser turns have no absolute deadline unless one is explicitly configure
   })).toThrow("turnTimeoutMs must be a positive finite number");
 });
 
+test("completion settlement waits long enough for slow ChatGPT compaction", () => {
+  expect(CHATGPT_COMPLETION_SETTLE_MS).toBe(240_000);
+  expect(CHATGPT_TOOL_COMPLETION_SETTLE_MS).toBe(240_000);
+});
+
 test("managed Chrome defaults follow the host platform", () => {
   expect(defaultChromeExecutable("darwin")).toBe("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
   expect(defaultChromeExecutable("linux")).toBe("/usr/bin/google-chrome");
@@ -3794,10 +3799,11 @@ test("proven MCP progress vetoes completion, not only the health verdicts", () =
   expect(tracker.update(finishedLooking, 5_600)).toBeTrue();
 });
 
-test("tool-capable turns use a longer completion settle window", () => {
+test("all completion paths use the longer completion settle window", () => {
   expect(chatGptCompletionSettleMs(false)).toBe(CHATGPT_COMPLETION_SETTLE_MS);
   expect(chatGptCompletionSettleMs(true)).toBe(CHATGPT_TOOL_COMPLETION_SETTLE_MS);
-  expect(CHATGPT_TOOL_COMPLETION_SETTLE_MS).toBeGreaterThan(CHATGPT_COMPLETION_SETTLE_MS);
+  expect(chatGptCompletionSettleMs(false)).toBe(240_000);
+  expect(chatGptCompletionSettleMs(true)).toBe(240_000);
 });
 
 test("Full mode has no fixed post-tool final-answer deadline", () => {
