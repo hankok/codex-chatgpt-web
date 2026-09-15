@@ -23,6 +23,7 @@ const {
   MANUAL_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
   navigationOriginForLog,
+  systemMemoryInfoForPressure,
 } = require("../electron/browser-host.cjs");
 
 test("manual prompt handoff keeps ordinary turns at thirty seconds and compaction at two minutes", () => {
@@ -1635,6 +1636,7 @@ test("an uninitialized browser surface is reaped instead of remaining as a gray 
 test("removing the final turn tab keeps the descriptor-owned idle host attached offscreen", () => {
   const calls = [];
   const hiddenBounds = { x: 1201, y: 801, width: 1200, height: 800 };
+  const zoomHandler = () => {};
   const tab = {
     id: "tab-gray-host",
     traceId: "trace_gray_host",
@@ -1643,12 +1645,14 @@ test("removing the final turn tab keeps the descriptor-owned idle host attached 
     view: {
       webContents: {
         isDestroyed: () => false,
-        close: () => calls.push("contents-close"),
+        off: (event, handler) => calls.push(["contents-off", event, handler]),
+        close: options => calls.push(["contents-close", options]),
       },
     },
   };
   const fixture = Object.assign(Object.create(BrowserHost.prototype), {
     turnTabs: new Map([[tab.id, tab]]),
+    shellZoomShortcutBindings: new Map([[tab.view.webContents, zoomHandler]]),
     closedTurnOwners: new Map(),
     selectedTabId: tab.id,
     visible: true,
@@ -1678,13 +1682,43 @@ test("removing the final turn tab keeps the descriptor-owned idle host attached 
 
   assert.equal(fixture.selectedTabId, "home");
   assert.equal(fixture.visible, false);
+  assert.equal(fixture.shellZoomShortcutBindings.has(tab.view.webContents), false);
   assert.deepEqual(calls, [
+    ["contents-off", "before-input-event", zoomHandler],
     "view-remove",
-    "contents-close",
+    ["contents-close", { waitForBeforeUnload: false }],
     ["home-bounds", hiddenBounds],
     ["home-visible", true],
     ["home-bounds", hiddenBounds],
     ["home-visible", true],
+  ]);
+});
+
+test("closing an authentication view releases its shell listener before destroying contents", () => {
+  const calls = [];
+  const zoomHandler = () => {};
+  const contents = {
+    isDestroyed: () => false,
+    off: (event, handler) => calls.push(["contents-off", event, handler]),
+    close: options => calls.push(["contents-close", options]),
+  };
+  const authView = { webContents: contents };
+  const fixture = Object.assign(Object.create(BrowserHost.prototype), {
+    authView,
+    shellZoomShortcutBindings: new Map([[contents, zoomHandler]]),
+    window: { contentView: { removeChildView: view => calls.push(["view-remove", view]) } },
+    syncViewVisibility() {},
+    logger: { info() {} },
+  });
+
+  BrowserHost.prototype.closeAuthView.call(fixture, authView, true, false);
+
+  assert.equal(fixture.authView, null);
+  assert.equal(fixture.shellZoomShortcutBindings.has(contents), false);
+  assert.deepEqual(calls, [
+    ["contents-off", "before-input-event", zoomHandler],
+    ["view-remove", authView],
+    ["contents-close", { waitForBeforeUnload: false }],
   ]);
 });
 
@@ -2455,6 +2489,64 @@ test("a retained browser tab expires at thirty minutes", () => {
 
   assert.deepEqual(removed, [[tab.id, false]]);
   assert.equal(fixture.turnTabs.size, 0);
+});
+
+test("memory pressure reclaims retained tabs without interrupting running turns", () => {
+  const removed = [];
+  const logs = [];
+  const retained = {
+    id: "tab-retained-pressure",
+    traceId: "trace_retained_pressure",
+    status: "ready",
+    lastHeartbeatAt: 100,
+  };
+  const running = {
+    id: "tab-running-pressure",
+    traceId: "trace_running_pressure",
+    status: "running",
+    bootstrapReady: true,
+    lastHeartbeatAt: 990,
+  };
+  const fixture = {
+    lastTurnSweepAt: 995,
+    turnTabs: new Map([[retained.id, retained], [running.id, running]]),
+    logger: { info: (event, detail) => logs.push([event, detail]) },
+    removeTurnTab(candidate, abortRunning) {
+      removed.push([candidate.id, abortRunning]);
+      this.turnTabs.delete(candidate.id);
+    },
+  };
+
+  BrowserHost.prototype.reapExpiredTurnTabs.call(fixture, 1_000, {
+    freeBytes: 6 * 1024 ** 3,
+    totalBytes: 32 * 1024 ** 3,
+  });
+
+  assert.deepEqual(removed, [[retained.id, false]]);
+  assert.equal(fixture.turnTabs.has(running.id), true);
+  assert.deepEqual(logs, [["browser.retained_tab_reclaimed_for_memory", {
+    tabId: retained.id,
+    traceId: retained.traceId,
+    freeBytes: 6 * 1024 ** 3,
+    totalBytes: 32 * 1024 ** 3,
+  }]]);
+});
+
+test("Linux memory pressure uses MemAvailable instead of unreclaimable MemFree", () => {
+  const gib = 1024 ** 3;
+  const info = systemMemoryInfoForPressure({
+    platform: "linux",
+    readFileSync: () => [
+      "MemTotal:       33554432 kB",
+      "MemFree:         1048576 kB",
+      "MemAvailable:    9437184 kB",
+      "Cached:          7340032 kB",
+    ].join("\n"),
+    freeBytes: gib,
+    totalBytes: 32 * gib,
+  });
+
+  assert.deepEqual(info, { freeBytes: 9 * gib, totalBytes: 32 * gib });
 });
 
 test("a completed connector turn without binding is released instead of retained", async () => {

@@ -1,4 +1,5 @@
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { createHash, randomBytes } = require("node:crypto");
 const { clipboard, WebContentsView, powerMonitor, powerSaveBlocker, shell } = require("electron");
@@ -44,6 +45,8 @@ const TURN_HEARTBEAT_SWEEP_MS = 5_000;
 const TURN_HEARTBEAT_TIMEOUT_MS = 60_000;
 const TURN_TAB_BOOTSTRAP_TIMEOUT_MS = 120_000;
 const RETAINED_TURN_TAB_TTL_MS = 30 * 60 * 1000;
+const RETAINED_TURN_TAB_MIN_FREE_FRACTION = 0.25;
+const RETAINED_TURN_TAB_MIN_FREE_CAP_BYTES = 8 * 1024 ** 3;
 const BROWSER_NAVIGATION_TIMEOUT_MS = 60_000;
 const CHATGPT_AUTH_SESSION_TIMEOUT_MS = 5_000;
 const WINDOW_VISIBILITY_EVENTS = ["show", "hide", "minimize", "restore"];
@@ -88,6 +91,34 @@ const CHATGPT_VIEWPORT_CSS = `
 `;
 
 const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+function closeOwnedWebContents(contents) {
+  if (!contents || contents.isDestroyed()) return;
+  // These pages are disposable launcher surfaces. Do not let page unload handlers keep their
+  // renderer alive after the surface has been removed from the window.
+  contents.close({ waitForBeforeUnload: false });
+}
+
+function systemMemoryInfoForPressure({
+  platform = process.platform,
+  readFileSync = fs.readFileSync,
+  freeBytes = os.freemem(),
+  totalBytes = os.totalmem(),
+} = {}) {
+  if (platform === "linux") {
+    try {
+      const meminfo = readFileSync("/proc/meminfo", "utf8");
+      const match = /^MemAvailable:\s+(\d+)\s+kB\s*$/mi.exec(meminfo);
+      const availableKilobytes = match ? Number.parseInt(match[1], 10) : NaN;
+      if (Number.isSafeInteger(availableKilobytes) && availableKilobytes >= 0) {
+        freeBytes = availableKilobytes * 1024;
+      }
+    } catch {
+      // Fall back to os.freemem() when /proc is unavailable or unreadable.
+    }
+  }
+  return { freeBytes, totalBytes };
+}
 
 function javaScriptLiteral(value) {
   return JSON.stringify(value).replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
@@ -747,6 +778,17 @@ class BrowserHost {
     contents.once("destroyed", () => this.shellZoomShortcutBindings.delete(contents));
   }
 
+  unbindShellZoomShortcuts(contents) {
+    const bindings = this.shellZoomShortcutBindings;
+    if (!bindings || !contents) return;
+    const handler = bindings.get(contents);
+    if (!handler) return;
+    if (!contents.isDestroyed() && typeof contents.off === "function") {
+      contents.off("before-input-event", handler);
+    }
+    bindings.delete(contents);
+  }
+
   bindTurnContents(tab) {
     const contents = tab.view.webContents;
     contents.setWindowOpenHandler(({ url }) => {
@@ -1337,7 +1379,11 @@ class BrowserHost {
     }
   }
 
-  reapExpiredTurnTabs(now = Date.now()) {
+  systemMemoryInfo() {
+    return systemMemoryInfoForPressure();
+  }
+
+  reapExpiredTurnTabs(now = Date.now(), memoryInfo = this.systemMemoryInfo?.()) {
     const lastSweepAt = this.lastTurnSweepAt;
     this.lastTurnSweepAt = now;
     if (sweepGapIndicatesSuspension(lastSweepAt, now, TURN_HEARTBEAT_SWEEP_MS)) {
@@ -1346,11 +1392,26 @@ class BrowserHost {
       this.refreshTurnLeases("sweep_gap", now);
       return;
     }
+    const memoryPressure = Number.isFinite(memoryInfo?.freeBytes)
+      && Number.isFinite(memoryInfo?.totalBytes)
+      && memoryInfo.totalBytes > 0
+      && memoryInfo.freeBytes < Math.min(
+        RETAINED_TURN_TAB_MIN_FREE_CAP_BYTES,
+        memoryInfo.totalBytes * RETAINED_TURN_TAB_MIN_FREE_FRACTION,
+      );
     for (const tab of [...this.turnTabs.values()]) {
       if (tab.interactionMode === "manual") {
         if (tab.status === "ready") {
-          if (now - (tab.lastHeartbeatAt ?? 0) < RETAINED_TURN_TAB_TTL_MS) continue;
-          this.logger.info("browser.retained_tab_expired", { tabId: tab.id, traceId: tab.traceId });
+          const expired = now - (tab.lastHeartbeatAt ?? 0) >= RETAINED_TURN_TAB_TTL_MS;
+          if (!expired && !memoryPressure) continue;
+          this.logger.info(memoryPressure && !expired
+            ? "browser.retained_tab_reclaimed_for_memory"
+            : "browser.retained_tab_expired", memoryPressure && !expired ? {
+              tabId: tab.id,
+              traceId: tab.traceId,
+              freeBytes: memoryInfo.freeBytes,
+              totalBytes: memoryInfo.totalBytes,
+            } : { tabId: tab.id, traceId: tab.traceId });
           this.removeTurnTab(tab, false);
           continue;
         }
@@ -1367,8 +1428,16 @@ class BrowserHost {
         continue;
       }
       if (tab.status === "ready") {
-        if (now - (tab.lastHeartbeatAt ?? 0) < RETAINED_TURN_TAB_TTL_MS) continue;
-        this.logger.info("browser.retained_tab_expired", { tabId: tab.id, traceId: tab.traceId });
+        const expired = now - (tab.lastHeartbeatAt ?? 0) >= RETAINED_TURN_TAB_TTL_MS;
+        if (!expired && !memoryPressure) continue;
+        this.logger.info(memoryPressure && !expired
+          ? "browser.retained_tab_reclaimed_for_memory"
+          : "browser.retained_tab_expired", memoryPressure && !expired ? {
+            tabId: tab.id,
+            traceId: tab.traceId,
+            freeBytes: memoryInfo.freeBytes,
+            totalBytes: memoryInfo.totalBytes,
+          } : { tabId: tab.id, traceId: tab.traceId });
         this.removeTurnTab(tab, false);
         continue;
       }
@@ -1530,8 +1599,9 @@ class BrowserHost {
       this.closedTurnOwners.set(tab.traceId, tab.helperPid);
       tab.status = "aborted";
     }
+    this.unbindShellZoomShortcuts(tab.view.webContents);
     try { this.window.contentView.removeChildView(tab.view); } catch {}
-    if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+    closeOwnedWebContents(tab.view.webContents);
     if (this.selectedTabId === tab.id) {
       this.selectedTabId = [...this.turnTabs.keys()].at(-1) || "home";
       const homeContents = this.view?.webContents;
@@ -1727,8 +1797,9 @@ class BrowserHost {
       authView.navigationTimeout = null;
     }
     this.authView = null;
+    this.unbindShellZoomShortcuts(authView.webContents);
     try { this.window.contentView.removeChildView(authView); } catch {}
-    if (closeContents && !authView.webContents.isDestroyed()) authView.webContents.close();
+    if (closeContents) closeOwnedWebContents(authView.webContents);
     this.syncViewVisibility();
     this.logger.info("browser.auth_surface_closed");
     if (refreshMain && this.manualOperation === "ChatGPT login" && !this.view.webContents.isDestroyed()) {
@@ -2912,10 +2983,10 @@ class BrowserHost {
         tab.manualTerminalWaiters?.clear();
       }
       try { this.window.contentView.removeChildView(tab.view); } catch {}
-      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.close();
+      closeOwnedWebContents(tab.view.webContents);
     }
     this.turnTabs.clear();
-    if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.close();
+    closeOwnedWebContents(this.view?.webContents);
   }
 }
 
@@ -2932,5 +3003,6 @@ module.exports = {
   MANUAL_COMPACTION_SUBMIT_TIMEOUT_MS,
   navigationErrorForLog,
   navigationOriginForLog,
+  systemMemoryInfoForPressure,
   TEMPORARY_CHAT_URL,
 };

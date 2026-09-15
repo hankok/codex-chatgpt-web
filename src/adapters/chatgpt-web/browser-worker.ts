@@ -112,6 +112,10 @@ export async function closeChatGptBrowserWorkers(): Promise<void> {
 }
 
 export const CHATGPT_RESPONSE_DOM_GRACE_MS = 60_000;
+// DOM snapshots are cached behind a page-side MutationObserver. Polling more often than this
+// still pays for a Playwright round trip while the cached revision is unchanged, which makes a
+// long-running response burn a CPU core without improving correctness.
+export const CHATGPT_BROWSER_OBSERVATION_POLL_MS = 500;
 /**
  * How long a staged Bigger Context part may take to produce its assistant turn. A staged part is two
  * orders of magnitude larger than an ordinary prompt and ChatGPT reads all of it before answering.
@@ -119,6 +123,9 @@ export const CHATGPT_RESPONSE_DOM_GRACE_MS = 60_000;
  * the bounded staged-send budget.
  */
 export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 1_200_000;
+// Multipart acknowledgement waits while ChatGPT ingests an inert, large context part. It has no
+// token stream to sample, so use a slower cadence than the ordinary response observer.
+export const CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS = 1_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 /** Allow slow ChatGPT responses to settle before the completion observer declares them finished. */
@@ -3467,7 +3474,7 @@ export class ChatGptBrowserWorker {
         // Proven MCP activity outranks a momentarily unavailable staging DOM, exactly as it does
         // in the main turn loop.
         domHealthTracker.clearMissingResponse();
-        await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+        await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
         continue;
       }
       const running = await page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last().isVisible().catch(() => false);
@@ -3504,7 +3511,7 @@ export class ChatGptBrowserWorker {
         }
         return;
       }
-      await new Promise(resolveSleep => setTimeout(resolveSleep, 100));
+      await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS));
     }
   }
 
@@ -4813,7 +4820,7 @@ export class ChatGptBrowserWorker {
           () => diagnostics.capture(page, "tool-confirmation-visible"),
         )) {
           internalObservationFaults = 0;
-          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+          await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
           continue;
         }
 
@@ -4888,7 +4895,7 @@ export class ChatGptBrowserWorker {
           // temporarily cannot expose the response subtree. DOM remains authoritative for text and
           // completion; this only prevents a live turn from being misclassified as vanished.
           domHealthTracker.clearMissingResponse();
-          await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+          await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
           continue;
         }
         const stop = page.locator(CHATGPT_STOP_BUTTON_SELECTOR).last();
@@ -4933,7 +4940,7 @@ export class ChatGptBrowserWorker {
               if (completionFenceRevision === undefined) {
                 const revision = await turn.completionFence.begin();
                 if (revision === undefined) {
-                  await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+                  await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
                   continue;
                 }
                 completionFenceRevision = revision;
@@ -4942,14 +4949,14 @@ export class ChatGptBrowserWorker {
                 // stale cached completion and the broker's terminal decision.
                 responseDomCache.key = undefined;
                 responseDomCache.snapshot = undefined;
-                await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+                await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
                 continue;
               }
               if (!await turn.completionFence.commit(completionFenceRevision)) {
                 completionFenceRevision = undefined;
                 responseDomCache.key = undefined;
                 responseDomCache.snapshot = undefined;
-                await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+                await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
                 continue;
               }
             }
@@ -4998,7 +5005,7 @@ export class ChatGptBrowserWorker {
           });
           if (domError) throw new Error(domError);
         }
-        await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+        await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
        } catch (error) {
         // Only a defect in this worker is retried here. Every deliberate signal — adapter errors,
         // aborts, closed tabs, DOM-health verdicts — still fails the turn immediately.
@@ -5020,7 +5027,7 @@ export class ChatGptBrowserWorker {
         await diagnostics.capture(page, "internal-observation-fault");
         responseDomCache.key = undefined;
         responseDomCache.snapshot = undefined;
-        await new Promise(resolveSleep => setTimeout(resolveSleep, 250));
+        await new Promise(resolveSleep => setTimeout(resolveSleep, CHATGPT_BROWSER_OBSERVATION_POLL_MS));
        }
       }
 
