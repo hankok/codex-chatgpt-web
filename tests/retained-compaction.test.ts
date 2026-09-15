@@ -5,7 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BrowserTurn } from "../src/adapters/chatgpt-web/browser-worker";
 import { ChatGptBrowserWorker } from "../src/adapters/chatgpt-web/browser-worker";
-import { ChatGptCompactionHandoffAccepted, chatGptRetainedConversationUnavailableError } from "../src/adapters/chatgpt-web/adapter-error";
+import {
+  ChatGptCompactionHandoffAccepted,
+  ChatGptWebAdapterError,
+  chatGptRetainedConversationUnavailableError,
+} from "../src/adapters/chatgpt-web/adapter-error";
 import {
   MAX_COMPACTION_HANDOFF_TIMEOUT_MS,
   cancelAllStructuredCompactions,
@@ -1256,6 +1260,62 @@ test.each([false, true])("structured compact rebuilds canonical context when its
       && event.text.includes("Fallback checkpoint from canonical Codex context"))).toBeTrue();
     expect(events.some(event => event.type === "text_delta"
       && event.text.includes("CODEX_LATEST_USER_PROMPT_JSON"))).toBeTrue();
+    expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+  } finally {
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    await TurnBroker.forSocket(provider.chatgptWeb!.brokerSocketPath!).close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("fresh compaction retries with the standard prompt when Bigger Context exceeds account capacity", async () => {
+  const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-bigger-context-capacity-"));
+  const provider: CodexProviderConfig = {
+    adapter: "chatgpt-web",
+    baseUrl: `browser://bigger-context-capacity-${Date.now()}`,
+    chatgptWeb: {
+      experimentalBiggerContext: true,
+      browserHost: "launcher",
+      browserHostDescriptorPath: join(root, "launcher.json"),
+      brokerSocketPath: defaultBrokerEndpoint(root),
+      localToolsEnabled: true,
+      solAvailable: true,
+      proAvailable: false,
+    },
+  };
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const originalRun = worker.run.bind(worker);
+  let browserStarts = 0;
+  (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    browserStarts += 1;
+    const prepared = await turn.prepare();
+    if (browserStarts === 1) {
+      expect(prepared.multipart).toBeDefined();
+      prepared.release();
+      throw new ChatGptWebAdapterError(
+        "No available ChatGPT effort can carry the Bigger Context stage",
+        {
+          status: 400,
+          errorType: "invalid_request_error",
+          code: "context_length_exceeded",
+          retryable: false,
+        },
+      );
+    }
+    expect(prepared.multipart).toBeUndefined();
+    prepared.release();
+    return "Standard fallback checkpoint";
+  };
+  const events: AdapterEvent[] = [];
+  try {
+    await createChatGptWebAdapter(provider).runTurn!(
+      request(true),
+      { headers: new Headers() },
+      event => events.push(event),
+    );
+    expect(browserStarts).toBe(2);
+    expect(events.some(event => event.type === "text_delta"
+      && event.text.includes("Standard fallback checkpoint"))).toBeTrue();
     expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
   } finally {
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;

@@ -193,6 +193,10 @@ function safeManualTerminalError(status: "cancelled" | "failed"): ChatGptWebAdap
   });
 }
 
+function isChatGptContextLengthExceeded(error: unknown): boolean {
+  return error instanceof ChatGptWebAdapterError && error.code === "context_length_exceeded";
+}
+
 export function chatGptWebExecutionNamespace(provider: CodexProviderConfig): string {
   return createHash("sha256").update(JSON.stringify({
     baseUrl: provider.baseUrl,
@@ -394,6 +398,7 @@ export function createChatGptWebAdapter(
     traceId: string,
     turnCapabilities: ChatGptWebCapabilities,
     hooks: { onCompactionProgress?: () => void } = {},
+    runtimeOptions: { forceStandardCompaction?: boolean } = {},
   ): ChatGptTurnRuntime => {
     const manualRequest = isChatGptWebZeroRiskBackendModel(parsed.modelId);
     if (manualRequest !== manualInteraction) {
@@ -431,6 +436,7 @@ export function createChatGptWebAdapter(
     const compileOptionsFor = (input: CodexParsedRequest) => {
       if (manualRequest) return {};
       const experimentalMultipartParts = experimentalBiggerContext
+        && !(runtimeOptions.forceStandardCompaction && input._compactionRequest)
         ? resolveBiggerContextMultipartParts(input, turnCapabilities)
         : undefined;
       return {
@@ -927,27 +933,43 @@ export function createChatGptWebAdapter(
                   const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
                   const runFreshCompactionFallback = async (reason: string): Promise<string> => {
                     console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
-                    // The fallback is a new bounded phase. Each exact multipart acknowledgement
-                    // and the final accepted compact prompt re-arms the five-minute liveness budget;
-                    // transport time cannot consume the model-generation window.
-                    armHandoffDeadline();
-                    const fallbackRuntime = startRuntime(
-                      parsed,
-                      manualRequest ? environment : undefined,
-                      `${handoffTraceId}_fallback`,
-                      turnCapabilities,
-                      { onCompactionProgress: armHandoffDeadline },
-                    );
-                    retainOwnershipUntil(fallbackRuntime.physicalSettlement);
+                    const runFallbackAttempt = async (forceStandardCompaction: boolean): Promise<string> => {
+                      // The fallback is a new bounded phase. Each exact multipart acknowledgement
+                      // and the final accepted compact prompt re-arms the five-minute liveness budget;
+                      // transport time cannot consume the model-generation window.
+                      armHandoffDeadline();
+                      const fallbackRuntime = startRuntime(
+                        parsed,
+                        manualRequest ? environment : undefined,
+                        `${handoffTraceId}_fallback`,
+                        turnCapabilities,
+                        { onCompactionProgress: armHandoffDeadline },
+                        { forceStandardCompaction },
+                      );
+                      retainOwnershipUntil(fallbackRuntime.physicalSettlement);
+                      try {
+                        const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
+                        await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
+                        return canonicalizeCompactionHandoff(parsed, rawSummary);
+                      } catch (error) {
+                        const retryableCapacityFailure = !forceStandardCompaction
+                          && fallbackRuntime.submission?.phase === "prepared"
+                          && isChatGptContextLengthExceeded(error);
+                        fallbackRuntime.cancel(error instanceof Error ? error : new Error(String(error)));
+                        if (retryableCapacityFailure) {
+                          await fallbackRuntime.physicalSettlement.catch(() => {});
+                        }
+                        // The shared owner retains physical settlement independently of this error.
+                        // Neither a timeout nor operator cancellation can open a competing trace.
+                        throw error;
+                      }
+                    };
                     try {
-                      const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
-                      await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
-                      return canonicalizeCompactionHandoff(parsed, rawSummary);
+                      return await runFallbackAttempt(false);
                     } catch (error) {
-                      fallbackRuntime.cancel(error instanceof Error ? error : new Error(String(error)));
-                      // The shared owner retains physical settlement independently of this error.
-                      // Neither a timeout nor operator cancellation can open a competing trace.
-                      throw error;
+                      if (operationSignal.aborted || !isChatGptContextLengthExceeded(error)) throw error;
+                      console.warn("[chatgpt-web] Bigger Context compaction stage exceeded account capacity; retrying with standard compaction");
+                      return await runFallbackAttempt(true);
                     }
                   };
                   let source: ChatGptTurnSession | undefined;
