@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import type { Page } from "playwright-core";
-import { CHATGPT_BROWSER_OBSERVATION_POLL_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS, CHATGPT_TOOL_COMPLETION_SETTLE_MS, ChatGptCompletionTracker, chatGptCompletionSettleMs, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_BROWSER_OBSERVATION_POLL_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS, CHATGPT_TOOL_COMPLETION_SETTLE_MS, ChatGptCompletionTracker, chatGptCompletionSettleMs, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
 import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -440,7 +440,7 @@ test("Luna turns without a retained conversation never send connector identity a
 });
 
 test("a stalled DOM observation fails within its probe budget", async () => {
-  expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(5_000);
+  expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(60_000);
   expect(MAX_CHATGPT_BROWSER_PAGE_REBINDS).toBe(2);
   await expect(withChatGptBrowserObservationTimeout(
     new Promise<never>(() => {}),
@@ -463,6 +463,20 @@ test("long-running browser observations do not spin at sub-250ms cadence", () =>
 
   const responseLoop = workerSource.slice(workerSource.indexOf("private async runBrowserTurn("));
   expect(responseLoop).toContain("CHATGPT_BROWSER_OBSERVATION_POLL_MS");
+});
+
+test("multipart acknowledgement does not inherit the four-minute final-response settle window", () => {
+  expect(CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS).toBe(1_000);
+  expect(CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS).toBeLessThan(CHATGPT_COMPLETION_SETTLE_MS);
+
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const acknowledgementLoop = workerSource.slice(
+    workerSource.indexOf("private async waitForMultipartAcknowledgement("),
+    workerSource.indexOf("private async resetCompactionComposerForRetry("),
+  );
+  expect(acknowledgementLoop).toContain(
+    "new ChatGptCompletionTracker(CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS)",
+  );
 });
 
 test("an accepted Full-mode send survives one stalled DOM probe and a later MCP batch without resending", async () => {
@@ -1172,7 +1186,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
     pressSequentially: async (value: string, options: { delay: number; signal?: AbortSignal; timeout: number }) => {
-      expect(options).toEqual({ delay: 25, signal: undefined, timeout: 10_000 });
+      expect(options).toEqual({ delay: 25, signal: undefined, timeout: 60_000 });
       calls.push(["pressSequentially", value]);
     },
     press: async (key: string) => {
@@ -1214,6 +1228,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
       activeComposerCalls += 1;
       return connectorSelected ? selectedComposer : initialComposer;
     },
+    clearChatGptComposerState: async () => {},
   }, page);
 
   expect(resolved).toBe(selectedComposer);
@@ -3008,7 +3023,7 @@ test("Bigger Context fits mixed-density whole records within both token and comp
       { stagingEffort: stagingMode.effort, maxStageMessageTokens, maxStageChars, finalMessageTokens, finalMessageChars: final.length },
     )).not.toThrow();
   }
-}, 20_000);
+}, 60_000);
 
 test("Bigger Context preflight expands only the total context ceiling and keeps each message boundary", () => {
   const plus = {

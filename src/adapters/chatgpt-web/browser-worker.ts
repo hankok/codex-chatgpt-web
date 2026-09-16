@@ -126,6 +126,9 @@ export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 1_200_000;
 // Multipart acknowledgement waits while ChatGPT ingests an inert, large context part. It has no
 // token stream to sample, so use a slower cadence than the ordinary response observer.
 export const CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS = 1_000;
+// The acknowledgement is a protocol boundary, not a model answer. Require only one short stable
+// observation before advancing; the ordinary final-answer settle window would stall the next part.
+export const CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS = 1_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 /** Allow slow ChatGPT responses to settle before the completion observer declares them finished. */
@@ -3416,7 +3419,7 @@ export class ChatGptBrowserWorker {
     deadline: number | undefined,
     abortSignal?: AbortSignal,
     externalProgress?: ChatGptTurnProgressReader,
-    completionTracker = new ChatGptCompletionTracker(),
+    completionTracker = new ChatGptCompletionTracker(CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS),
   ): Promise<void> {
     // A staged message may briefly create an assistant shell and then replace it while ChatGPT
     // ingests the attached context. The ordinary 60-second missing-response verdict would cut the

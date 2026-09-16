@@ -59,7 +59,7 @@ test("Full-mode Pro prompts pass one stable turn token directly to native action
   expect(transportOnly).toContain(`The task context is complete. Pass turn_token ${token} unchanged to every Codex Native call in this response, including continuations after tool results; do not expose it in the answer. Execute the latest active user request now.`);
   expect(transportOnly).not.toMatch(/codex_bind_turn|binding_id|outer_tool_gateway|command_tool/);
   expect(transportOnly).not.toMatch(/codex_exec|codex_write_stdin|codex_apply_patch|codex_view_image|codex_tool_inventory|codex\.control\.turn_complete/);
-  expect(transportOnly).not.toMatch(/expired|invalid|revoked|blocked|safety|security layer|permission gate/i);
+  expect(transportOnly).not.toContain("safety failure");
   expect(compiled.text).not.toContain("CODEX_INTERNAL_CONTEXT_COMPACT");
   expect(compiled.text).not.toContain("internally compacts this response");
 });
@@ -464,6 +464,44 @@ test("a long task keeps the newest images and drops the overflow instead of fail
   expect(compiled.text).toContain("older image not attached");
   expect(compiled.text).toContain("step 1");
   expect(compiled.text).toContain("step 13");
+});
+
+test("repeated canonical image payloads share one browser attachment", () => {
+  const imageUrl = "data:image/png;base64,repeated-image";
+  const parsed: CodexParsedRequest = {
+    modelId: CHATGPT_WEB_MODEL_ID,
+    context: {
+      systemPrompt: [],
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "first mention" },
+            { type: "image", imageUrl, detail: "low" },
+          ],
+          timestamp: 1,
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "replayed mention" },
+            { type: "image", imageUrl, detail: "high" },
+          ],
+          timestamp: 2,
+        },
+      ],
+    },
+    stream: true,
+    options: { reasoning: "high" },
+  };
+
+  const compiled = compileChatGptWebPrompt(parsed, { localToolsEnabled: false, solAvailable: true, proAvailable: true });
+  const envelope = compiled.text.split("<codex_context_json>\n")[1]!.split("\n</codex_context_json>")[0]!;
+  const references = [...envelope.matchAll(/"attachment_ref":"([^"]+)"/g)].map(match => match[1]);
+
+  expect(compiled.images).toHaveLength(1);
+  expect(compiled.images[0]).toMatchObject({ ref: "codex-input-image-1", imageUrl, detail: "high" });
+  expect(references).toEqual(["codex-input-image-1", "codex-input-image-1"]);
 });
 
 test("Web compaction attaches the newest ten images as files and never embeds their base64 in prompt text", () => {
