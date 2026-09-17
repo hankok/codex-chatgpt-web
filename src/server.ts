@@ -8,7 +8,7 @@ import {
   cancelStructuredCompactionNativeTurn,
   cancelStructuredCompactionTrace,
 } from "./adapters/chatgpt-web/compaction-handoff";
-import { chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
+import { ChatGptWebAdapterError, chatGptBrowserTabClosedError } from "./adapters/chatgpt-web/adapter-error";
 import {
   CHATGPT_TURN_REVISION_CONFLICT_MESSAGE,
   extractChatGptTurnIdentity,
@@ -36,6 +36,7 @@ import {
   type ChatGptWebModelRoute,
 } from "./chatgpt-web-models";
 import { forwardNativeCodexRequest, type NativeFetch, type NativeImageEndpoint } from "./native-passthrough";
+import { fetchNativeCodex } from "./native-network";
 import {
   buildCompactV1Output,
   COMPACT_PROMPT,
@@ -372,23 +373,43 @@ export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppCo
   return route;
 }
 
+interface ModelCatalogFailure {
+  stage: "config" | "request" | "transport" | "upstream" | "catalog";
+  code?: string;
+}
+
+function modelCatalogFailure(stage: ModelCatalogFailure["stage"], error: unknown): ModelCatalogFailure {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  return { stage, ...(typeof code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(code) ? { code } : {}) };
+}
+
 export async function modelsRequest(
   req: Request,
   config: AppConfig,
   fetchUpstream?: NativeFetch,
   contextOverride?: () => CodexModelContextOverride | undefined,
+  onFailure?: (failure: ModelCatalogFailure) => void,
 ): Promise<Response> {
   let upstream: Response;
+  let sent = false;
   try {
-    upstream = await forwardNativeCodexRequest(req, "models", fetchUpstream);
+    upstream = await forwardNativeCodexRequest(req, "models", input => {
+      sent = true;
+      return (fetchUpstream ?? fetchNativeCodex)(input);
+    });
   } catch (error) {
+    onFailure?.(modelCatalogFailure(sent ? "transport" : "request", error));
     return formatErrorResponse(502, "upstream_error", error instanceof Error ? error.message : String(error));
   }
-  if (!upstream.ok) return upstream;
+  if (!upstream.ok) {
+    onFailure?.({ stage: "upstream" });
+    return upstream;
+  }
   let catalog: Record<string, unknown>;
   try {
     catalog = augmentNativeModelCatalog(await upstream.json(), config, contextOverride?.());
   } catch (error) {
+    onFailure?.(modelCatalogFailure("catalog", error));
     return formatErrorResponse(502, "invalid_response_error", error instanceof Error ? error.message : String(error));
   }
   const body = JSON.stringify(catalog);
@@ -787,6 +808,10 @@ export function startServer(
   let shutdownPromise: Promise<void> | undefined;
   let successfulModelCatalogRequests = 0;
   let lastSuccessfulModelCatalogRequestAt: string | null = null;
+  let modelCatalogRequests = 0;
+  let lastModelCatalogResult: {
+    request: number; at: string; status: number; failure?: ModelCatalogFailure;
+  } | null = null;
   const httpTurns = new HttpTurnCounter();
   const activity = () => ({
     active_http_turns: httpTurns.count(),
@@ -816,6 +841,8 @@ export function startServer(
           accepting_turns: !draining,
           successful_model_catalog_requests: successfulModelCatalogRequests,
           last_successful_model_catalog_request_at: lastSuccessfulModelCatalogRequestAt,
+          model_catalog_requests: modelCatalogRequests,
+          last_model_catalog_result: lastModelCatalogResult,
           ...activity(),
         });
       }
@@ -828,17 +855,31 @@ export function startServer(
       if (req.method === "POST" && url.pathname === "/admin/cancel-turn") {
         if (!controlAuthorized(req)) return new Response("Unauthorized", { status: 401 });
         let traceId: string;
+        let leaseFailure: "browser_surface_bootstrap_timeout" | "helper_heartbeat_expired" | undefined;
         try {
-          const body = await req.json() as { traceId?: unknown };
+          const body = await req.json() as { traceId?: unknown; reason?: unknown };
           traceId = typeof body?.traceId === "string" ? body.traceId : "";
           if (!/^[A-Za-z0-9_-]{6,128}$/.test(traceId)) throw new Error("traceId is invalid");
+          if (body.reason !== undefined) {
+            if (body.reason !== "browser_surface_bootstrap_timeout" && body.reason !== "helper_heartbeat_expired") {
+              throw new Error("Browser turn cancellation reason is invalid");
+            }
+            leaseFailure = body.reason;
+          }
         } catch (error) {
           return Response.json(
             { status: "error", error: error instanceof Error ? error.message : String(error) },
             { status: 400 },
           );
         }
-        const reason = chatGptBrowserTabClosedError();
+        const reason = leaseFailure
+          ? new ChatGptWebAdapterError(
+            leaseFailure === "browser_surface_bootstrap_timeout"
+              ? "The ChatGPT browser turn did not finish browser setup before its lease expired. The turn was stopped."
+              : "The ChatGPT browser helper stopped reporting progress and its lease expired. The turn was stopped.",
+            { status: 504, errorType: "server_error", code: leaseFailure, retryable: false },
+          )
+          : chatGptBrowserTabClosedError();
         // Revoke the owner first. This prevents a compaction callback that observes its retained
         // source being cancelled below from starting a fresh fallback during operator shutdown.
         const compactionCancellation = cancelStructuredCompactionTrace(traceId, reason);
@@ -952,6 +993,19 @@ export function startServer(
           );
         }
         return httpTurns.track(async signal => {
+          const request = ++modelCatalogRequests;
+          const started = Date.now();
+          const recordResult = (response: Response, failure?: ModelCatalogFailure): Response => {
+            const result = { request, at: new Date().toISOString(), status: response.status, ...(failure ? { failure } : {}) };
+            // An older, slower request must not replace a newer completed result.
+            if (!lastModelCatalogResult || request > lastModelCatalogResult.request) lastModelCatalogResult = result;
+            if (!response.ok) {
+              try {
+                console.warn(`[codex-chatgpt-web] model_catalog_failed ${JSON.stringify({ ...result, elapsedMs: Date.now() - started })}`);
+              } catch { /* Logging must not replace the catalog result. */ }
+            }
+            return response;
+          };
           let catalogConfig: AppConfig;
           try {
             catalogConfig = {
@@ -959,23 +1013,25 @@ export function startServer(
               subagentProtocol: readCodexSubagentProtocol(config.subagentProtocol),
             };
           } catch (error) {
-            return formatErrorResponse(
+            return recordResult(formatErrorResponse(
               500,
               "server_error",
               `Could not resolve the installed subagent protocol: ${error instanceof Error ? error.message : String(error)}`,
-            );
+            ), modelCatalogFailure("config", error));
           }
+          let failure: ModelCatalogFailure | undefined;
           const response = await modelsRequest(
             new Request(req, { signal }),
             catalogConfig,
             dependencies.fetchUpstream,
             readCodexModelContextOverride,
+            value => { failure = value; },
           );
           if (response.ok) {
             successfulModelCatalogRequests += 1;
             lastSuccessfulModelCatalogRequestAt = new Date().toISOString();
           }
-          return response;
+          return recordResult(response, failure);
         }, req.signal, process.platform, "models");
       }
       if (req.method === "GET" && url.pathname === "/v1/responses") {

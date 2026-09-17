@@ -152,7 +152,7 @@ test("setup explicitly migrates v1 pro-only config to v3 managed browser-only", 
     storageStatePath: join(root, "browser", "storage-state.json"),
     brokerSocketPath: defaultBrokerEndpoint(root),
     headed: true,
-    proAvailable: true,
+    extraHighAvailable: true, proAvailable: true,
     autoApproveToolCalls: false,
     controlToken: "config-migration-control-token-0123456789abcdef",
     runtimeCommand: [process.execPath],
@@ -245,13 +245,14 @@ test("Luna-only provider configuration exposes only the Luna backend", () => {
   expect(provider.models).toEqual(["gpt-5.6-luna"]);
   expect(provider.defaultModel).toBe("gpt-5.6-luna");
   expect(provider.modelReasoningEfforts).toEqual({ "gpt-5.6-luna": ["low", "medium"] });
-  expect(provider.chatgptWeb).toMatchObject({ solAvailable: false, proAvailable: false });
+  expect(provider.chatgptWeb).toMatchObject({ solAvailable: false, extraHighAvailable: false, proAvailable: false });
 });
 
 test("manual provider configuration preserves a distinct backend without guessing a ChatGPT model", () => {
   const config = defaultConfig("full");
   config.browserInteractionMode = "manual";
   config.solAvailable = true;
+  config.extraHighAvailable = true;
   config.proAvailable = true;
   const provider = providerConfig(config);
 
@@ -264,7 +265,7 @@ test("manual provider configuration preserves a distinct backend without guessin
     appName: ZERO_RISK_CHATGPT_CONNECTOR_NAME,
     browserInteractionMode: "manual",
     solAvailable: false,
-    proAvailable: false,
+    extraHighAvailable: false, proAvailable: false,
     experimentalBiggerContext: false,
   });
 
@@ -278,4 +279,32 @@ test("manual provider configuration preserves a distinct backend without guessin
     [CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL]: ["low"],
     [CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL]: ["low"],
   });
+});
+
+test("skill attachments config defaults off, reaches the adapter, and rejects invalid/manual settings", () => {
+  const root = join(tmpdir(), `codex-skills-config-${process.pid}-${Date.now()}`);
+  roots.push(root);
+  process.env.CODEX_CHATGPT_WEB_HOME = root;
+  mkdirSync(root, { recursive: true });
+  const config: Record<string, unknown> = { ...defaultConfig("full") };
+  config.browserHost = "launcher";
+  config.browserHostDescriptorPath = join(root, "launcher.json");
+  config.tunnel = { binaryPath: join(root, "tunnel"), runtimeKeyFile: join(root, "key"),
+    profileDir: root, tunnelId: `tunnel_${"a".repeat(32)}`, profileName: "test", alias: "test" };
+  expect(config.experimentalSkillAttachments).toBe(false);
+  const persist = () => writeFileSync(join(root, "config.json"), JSON.stringify(config));
+  delete config.experimentalSkillAttachments;
+  persist();
+  expect(loadConfig()!.experimentalSkillAttachments).toBe(false);
+  config.experimentalSkillAttachments = true;
+  persist();
+  expect(providerConfig(loadConfig()!).chatgptWeb!.experimentalSkillAttachments).toBe(true);
+  config.experimentalSkillAttachments = "true";
+  persist();
+  expect(() => loadConfig()).toThrow("experimentalSkillAttachments");
+  config.experimentalSkillAttachments = true;
+  config.browserInteractionMode = "manual";
+  config.appName = ZERO_RISK_CHATGPT_CONNECTOR_NAME;
+  persist();
+  expect(() => loadConfig()).toThrow("Zero Risk does not support Skills as files");
 });

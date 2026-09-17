@@ -399,6 +399,7 @@ export function createLauncherDevAdapter(
       threadEnvironmentStatePath: join(runtimeStateRoot, "thread-environments.json"),
       lunaCheckpointStatePath: join(runtimeStateRoot, "luna-checkpoints.json"),
       turnTimeoutMs: 60 * 60_000,
+      experimentalSkillAttachments: config.experimentalSkillAttachments,
       ...(config.experimentalBiggerContext
         ? { experimentalBiggerContext: true }
         : {}),
@@ -595,6 +596,7 @@ export class DevChatDriver {
     const inputTokens = estimateChatGptWebInputTokens(parsed, {
       localToolsEnabled: this.config.mode === "full",
       solAvailable: this.config.solAvailable,
+      extraHighAvailable: this.config.extraHighAvailable === true,
       proAvailable: this.config.proAvailable,
     });
     const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, this.config);

@@ -53,6 +53,7 @@ export interface SetupOptions {
   forceLogin?: boolean;
   autoApproveToolCalls?: boolean;
   experimentalBiggerContext?: boolean;
+  experimentalSkillAttachments?: boolean;
   zeroRiskProEnabled?: boolean;
   replaceCodexRoute?: boolean;
   restartService?: boolean;
@@ -100,6 +101,7 @@ export function launcherCapabilityProbeRequired(
     || existing?.browserInteractionMode === "manual"
     || existing?.browserHost !== "launcher"
     || typeof existing.solAvailable !== "boolean"
+    || typeof existing.extraHighAvailable !== "boolean"
     || typeof existing.proAvailable !== "boolean";
 }
 
@@ -140,8 +142,10 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     brokerSocketPath: before.brokerSocketPath,
     headed: before.headed,
     solAvailable: before.solAvailable,
+    extraHighAvailable: before.extraHighAvailable,
     proAvailable: before.proAvailable,
     experimentalBiggerContext: before.experimentalBiggerContext,
+    experimentalSkillAttachments: before.experimentalSkillAttachments,
     zeroRiskProEnabled: before.zeroRiskProEnabled,
     autoApproveToolCalls: before.autoApproveToolCalls,
     controlToken: before.controlToken,
@@ -167,8 +171,10 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     brokerSocketPath: after.brokerSocketPath,
     headed: after.headed,
     solAvailable: after.solAvailable,
+    extraHighAvailable: after.extraHighAvailable,
     proAvailable: after.proAvailable,
     experimentalBiggerContext: after.experimentalBiggerContext,
+    experimentalSkillAttachments: after.experimentalSkillAttachments,
     zeroRiskProEnabled: after.zeroRiskProEnabled,
     autoApproveToolCalls: after.autoApproveToolCalls,
     controlToken: after.controlToken,
@@ -264,6 +270,9 @@ function baseConfig(
     delete config.browserHostDescriptorPath;
   }
   if (options.autoApproveToolCalls !== undefined) config.autoApproveToolCalls = options.autoApproveToolCalls;
+  if (options.experimentalSkillAttachments !== undefined) {
+    config.experimentalSkillAttachments = options.experimentalSkillAttachments;
+  }
   if (options.experimentalBiggerContext !== undefined) {
     config.experimentalBiggerContext = options.experimentalBiggerContext;
   }
@@ -280,6 +289,9 @@ function baseConfig(
     if (options.forceLogin) {
       throw new Error("Zero Risk uses the launcher's existing ChatGPT session; --login is unavailable");
     }
+    if (options.experimentalSkillAttachments === true) {
+      throw new Error("Zero Risk does not support Skills as files");
+    }
     if (options.experimentalBiggerContext === true) {
       throw new Error("Zero Risk does not support Bigger Context");
     }
@@ -290,6 +302,7 @@ function baseConfig(
       throw new Error("Zero Risk requires the Launcher; pass --browser-host-descriptor from the running Launcher");
     }
     config.experimentalBiggerContext = false;
+    config.experimentalSkillAttachments = false;
   }
   if (options.acknowledgedUnofficial) config.acknowledgedUnofficialAt = new Date().toISOString();
   if (!config.acknowledgedUnofficialAt) {
@@ -303,7 +316,7 @@ async function inspectLauncherCapabilities(
   existing: AppConfig | undefined,
   refreshAccountCapabilities: boolean,
   expectedProfile: "production" | "development",
-): Promise<{ solAvailable: boolean; proAvailable: boolean }> {
+): Promise<{ solAvailable: boolean; extraHighAvailable: boolean; proAvailable: boolean }> {
   const detectCapabilities = launcherCapabilityProbeRequired(
     existing,
     refreshAccountCapabilities,
@@ -315,6 +328,7 @@ async function inspectLauncherCapabilities(
   });
   return {
     solAvailable: detectCapabilities ? inspected.solAvailable === true : existing!.solAvailable,
+    extraHighAvailable: detectCapabilities ? inspected.extraHighAvailable === true : existing!.extraHighAvailable === true,
     proAvailable: detectCapabilities ? inspected.proAvailable === true : existing!.proAvailable,
   };
 }
@@ -489,6 +503,7 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
 
   let loginCreated = false;
   let solAvailable: boolean | undefined = config.solAvailable;
+  let extraHighAvailable: boolean | undefined = config.extraHighAvailable;
   let proAvailable: boolean | undefined = config.proAvailable;
   if (config.browserInteractionMode === "manual") {
     // The generic manual route is independent of account capabilities. The launcher may open the
@@ -502,16 +517,19 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
       "production",
     );
     solAvailable = capabilities.solAvailable;
+    extraHighAvailable = capabilities.extraHighAvailable;
     proAvailable = capabilities.proAvailable;
   } else {
     const stored = storedBrowserLoginCapabilities(config);
     solAvailable = stored.solAvailable;
+    extraHighAvailable = stored.extraHighAvailable;
     proAvailable = stored.proAvailable;
     const loginRequired = options.forceLogin || !browserLoginStateExists(config);
     const capabilityProbeRequired = !loginRequired
       && (options.refreshAccountCapabilities === true
         || existing?.browserInteractionMode === "manual"
         || solAvailable === undefined
+        || extraHighAvailable === undefined
         || proAvailable === undefined);
     if (beforeService.loaded && (loginRequired || capabilityProbeRequired) && !options.restartService) {
       throw new Error(
@@ -523,15 +541,18 @@ export async function setup(options: SetupOptions): Promise<SetupResult> {
     if (loginRequired) {
       const login = await loginToChatGpt(config);
       solAvailable = login.solAvailable;
+      extraHighAvailable = login.extraHighAvailable;
       proAvailable = login.proAvailable;
       loginCreated = true;
     } else if (capabilityProbeRequired) {
       const inspected = await inspectBrowserLoginCapabilities(config);
       solAvailable = inspected.solAvailable;
+      extraHighAvailable = inspected.extraHighAvailable;
       proAvailable = inspected.proAvailable;
     }
   }
   config.solAvailable = solAvailable === true;
+  config.extraHighAvailable = config.solAvailable && extraHighAvailable === true;
   config.proAvailable = config.solAvailable && proAvailable === true;
   const explicitTunnelChange = Boolean(options.tunnelId || options.runtimeKeyFile || options.runtimeKeyValue);
   const preliminaryChange = Boolean(existing && (meaningfulRuntimeChange(existing, config) || explicitTunnelChange || options.forceLogin));
@@ -643,6 +664,7 @@ export async function setupDevProfile(options: SetupOptions): Promise<DevProfile
       DEV_LAUNCHER_PROFILE,
     );
     config.solAvailable = capabilities.solAvailable;
+    config.extraHighAvailable = capabilities.solAvailable && capabilities.extraHighAvailable;
     config.proAvailable = capabilities.solAvailable && capabilities.proAvailable;
   }
 

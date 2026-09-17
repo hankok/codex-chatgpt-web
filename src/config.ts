@@ -82,8 +82,10 @@ export interface AppConfig {
   brokerSocketPath: string;
   headed: boolean;
   solAvailable: boolean;
+  extraHighAvailable?: boolean;
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
+  experimentalSkillAttachments: boolean;
   /** Explicitly install the additional Pro-sized model row while Zero Risk is active. */
   zeroRiskProEnabled: boolean;
   /** Optional adapter-silence budget for the Responses watchdog. */
@@ -210,8 +212,10 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     brokerSocketPath: defaultBrokerEndpoint(home),
     headed: true,
     solAvailable: true,
+    extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
+    experimentalSkillAttachments: false,
     zeroRiskProEnabled: false,
     autoApproveToolCalls: false,
     controlToken: randomBytes(32).toString("base64url"),
@@ -480,6 +484,9 @@ function parseConfig(value: unknown, path: string): AppConfig {
     throw new Error(`Invalid runtimeCommand in ${path}`);
   }
   assertDurableRuntimeCommand(parsed.runtimeCommand as string[]);
+  if (parsed.extraHighAvailable !== undefined && typeof parsed.extraHighAvailable !== "boolean") {
+    throw new Error(`Invalid extraHighAvailable in ${path}`);
+  }
   if (parsed.proAvailable !== undefined && typeof parsed.proAvailable !== "boolean") {
     throw new Error(`Invalid proAvailable in ${path}`);
   }
@@ -499,10 +506,20 @@ function parseConfig(value: unknown, path: string): AppConfig {
   }
   const solAvailable = parsed.solAvailable !== false;
   const proAvailable = parsed.proAvailable === true;
+  if (parsed.experimentalSkillAttachments !== undefined && typeof parsed.experimentalSkillAttachments !== "boolean") {
+    throw new Error(`Invalid experimentalSkillAttachments in ${path}`);
+  }
+  const experimentalSkillAttachments = parsed.experimentalSkillAttachments === true;
+  if (browserInteractionMode === "manual" && experimentalSkillAttachments) {
+    throw new Error(`Zero Risk does not support Skills as files in ${path}`);
+  }
   const experimentalBiggerContext = parsed.experimentalBiggerContext === true;
   const zeroRiskProEnabled = parsed.zeroRiskProEnabled === true;
   if (browserInteractionMode === "manual" && experimentalBiggerContext) {
     throw new Error(`Zero Risk does not support Bigger Context in ${path}`);
+  }
+  if (parsed.extraHighAvailable === true && !solAvailable) {
+    throw new Error(`Invalid ChatGPT account capabilities in ${path}: Extra High requires Sol`);
   }
   if (proAvailable && !solAvailable) {
     throw new Error(`Invalid ChatGPT account capabilities in ${path}: Pro requires Sol`);
@@ -517,6 +534,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     solAvailable,
     proAvailable,
     experimentalBiggerContext,
+    experimentalSkillAttachments,
     zeroRiskProEnabled,
   } as AppConfig;
 }
@@ -541,7 +559,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
   const efforts = manual
     ? ["low"]
     : config.solAvailable
-    ? ["low", "medium", "high", "xhigh", ...(config.proAvailable ? ["max"] : [])]
+    ? ["low", "medium", "high", ...(config.extraHighAvailable === true ? ["xhigh"] : []), ...(config.proAvailable ? ["max"] : [])]
     : ["low", "medium"];
   return {
     adapter: "chatgpt-web",
@@ -569,8 +587,10 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       headed: config.headed,
       localToolsEnabled: config.mode === "full",
       solAvailable: manual ? false : config.solAvailable,
+      extraHighAvailable: !manual && config.extraHighAvailable === true,
       proAvailable: manual ? false : config.proAvailable,
       experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
+      experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       ...(config.stallTimeoutSec !== undefined ? { stallTimeoutSec: config.stallTimeoutSec } : {}),
       autoApproveToolCalls: manual ? false : config.autoApproveToolCalls,
     },
