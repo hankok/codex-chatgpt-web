@@ -1,4 +1,3 @@
-import { skillFileTokens } from "./skill-attachments";
 import { estimateTokens } from "../../lib/token-estimate";
 import {
   CHATGPT_WEB_BACKEND_MODEL,
@@ -67,7 +66,6 @@ export function estimateChatGptWebInputTokens(
 export function resolveBiggerContextMultipartParts(
   parsed: CodexParsedRequest,
   capabilities: ChatGptWebCapabilities,
-  experimentalSkillAttachments = false,
 ): ChatGptWebMultipartPartCount | undefined {
   if (isChatGptWebZeroRiskBackendModel(parsed.modelId)) {
     throw new Error("Bigger Context is unavailable for ChatGPT Zero Risk");
@@ -84,7 +82,7 @@ export function resolveBiggerContextMultipartParts(
   );
   const compile = (parts?: ChatGptWebMultipartPartCount): CompiledChatGptWebPrompt => compileChatGptWebPrompt(
     parsed, capabilities, mode.localTools ? ESTIMATE_TURN_TOKEN : undefined,
-    { experimentalMultipartParts: parts, experimentalSkillAttachments },
+    { experimentalMultipartParts: parts },
   );
   const inline = compile();
   const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
@@ -102,7 +100,7 @@ export function resolveBiggerContextMultipartParts(
       const { browserComposerCharLimit } = resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities);
       if (browserComposerCharLimit !== undefined && text.length > browserComposerCharLimit) return false;
       const budget = resolveChatGptWebMessageTokenBudget(
-        CHATGPT_WEB_BACKEND_MODEL, effort, capabilities, final ? estimateChatGptWebImageTokens(compiled) + skillFileTokens(compiled.skillFiles, parsed.modelId) : 0,
+        CHATGPT_WEB_BACKEND_MODEL, effort, capabilities, final ? estimateChatGptWebImageTokens(compiled) : 0,
       );
       if (estimateTokens(text, parsed.modelId) > budget) return false;
     }
@@ -144,12 +142,10 @@ export function estimateChatGptWebUsage(
   evidence: ChatGptWebRoundEvidence,
   capabilities: ChatGptWebCapabilities,
   experimentalBiggerContext = false,
-  experimentalSkillAttachments = false,
 ): CodexUsage {
   const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
-    experimentalSkillAttachments,
     experimentalMultipartParts: experimentalBiggerContext
-      ? resolveBiggerContextMultipartParts(parsed, capabilities, experimentalSkillAttachments)
+      ? resolveBiggerContextMultipartParts(parsed, capabilities)
       : undefined,
   });
   const outputTokens = conservativeTextTokens(roundEvidenceText(evidence), parsed.modelId);

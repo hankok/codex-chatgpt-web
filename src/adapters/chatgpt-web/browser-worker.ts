@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { skillFileTokens, validateSkillFiles } from "./skill-attachments";
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from "playwright-core";
 import {
   atomicWriteFile,
@@ -15,7 +14,6 @@ import {
   LEGACY_CHATGPT_CONNECTOR_NAMES,
 } from "../../config";
 import { estimateTokens } from "../../lib/token-estimate";
-import { CHATGPT_STOPPED_THINKING_LABELS } from "./ui-labels";
 import type { CodexProviderConfig } from "../../types";
 import { parseDataUrl } from "../image";
 import {
@@ -209,9 +207,9 @@ function chatGptModelControlUnavailableError(diagnostic: string): Error {
   return new Error(CHATGPT_MODEL_CONTROL_UNAVAILABLE_MESSAGE, { cause: new Error(diagnostic) });
 }
 
-function chatGptModelControlUnavailableAdapterError(diagnostic: string, detail?: string): ChatGptWebAdapterError {
+function chatGptModelControlUnavailableAdapterError(diagnostic: string): ChatGptWebAdapterError {
   return new ChatGptWebAdapterError(
-    detail ? `${CHATGPT_MODEL_CONTROL_UNAVAILABLE_MESSAGE} ChatGPT: ${detail}` : CHATGPT_MODEL_CONTROL_UNAVAILABLE_MESSAGE,
+    CHATGPT_MODEL_CONTROL_UNAVAILABLE_MESSAGE,
     {
       status: 502,
       errorType: "server_error",
@@ -220,41 +218,6 @@ function chatGptModelControlUnavailableAdapterError(diagnostic: string, detail?:
       cause: new Error(diagnostic),
     },
   );
-}
-
-export async function chatGptUnavailableProDetail(menu: Locator): Promise<string | undefined> {
-  // Pro is the product label in the picker. Its linked tooltip supplies the site's own
-  // localized explanation/date; do not search the conversation or infer a reset time.
-  const rows = menu.getByRole("menuitemradio", { name: "Pro", exact: true }).filter({ visible: true });
-  try {
-    if (await rows.count() !== 1 || await rows.getAttribute("aria-disabled") !== "true") return undefined;
-    await rows.hover({ timeout: 1_500 });
-    return await rows.evaluate(async element => {
-      const deadline = Date.now() + 1_000;
-      do {
-        const ids = element.getAttribute("aria-describedby")?.trim().split(/\s+/).filter(Boolean) ?? [];
-        const tooltips = ids.map(id => document.getElementById(id))
-          .filter((node): node is HTMLElement => node instanceof HTMLElement && node.getAttribute("role") === "tooltip");
-        const visible = tooltips.filter(node => {
-          for (let current: HTMLElement | null = node; current; current = current.parentElement) {
-            const style = getComputedStyle(current);
-            if (!current.isConnected || current.hidden || current.getAttribute("aria-hidden") === "true"
-              || style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
-          }
-          return true;
-        });
-        if (visible.length === 1) {
-          const text = visible[0]!.textContent?.replace(/\s+/g, " ").trim();
-          if (text && text.length <= 512) return text;
-        }
-        await new Promise(resolve => setTimeout(resolve, 50));
-      } while (Date.now() < deadline);
-      return undefined;
-    }, undefined, { timeout: 1_500 });
-  } catch {
-    // Optional UI detail must not replace the existing model-unavailable error.
-    return undefined;
-  }
 }
 
 export type ChatGptPersonalizationPreflight = "already-personalized" | "enabled";
@@ -2062,27 +2025,10 @@ export function chatGptImageFilePayloads(images: ChatGptWebPromptImage[]): Array
   });
 }
 
-function assertChatGptPromptAttachments(prompt: CompiledChatGptWebPrompt): void {
-  if (prompt.images.length + (prompt.skillFiles?.length ?? 0) > CHATGPT_MAX_INPUT_IMAGES) {
-    throw new ChatGptWebAdapterError(
-      "Selected skills and images exceed ChatGPT's 10 attachments per message; disable Skills as files or reduce attachments.",
-      { status: 400, errorType: "invalid_request_error", code: "too_many_attachments", retryable: false },
-    );
-  }
-  validateSkillFiles(prompt.skillFiles);
-}
-
 export function chatGptPromptFilePayloads(
   prompt: CompiledChatGptWebPrompt,
 ): Array<{ name: string; mimeType: string; buffer: Buffer }> {
-  assertChatGptPromptAttachments(prompt);
-  const files = [...chatGptImageFilePayloads(prompt.images), ...(prompt.skillFiles ?? []).map(file => ({
-    name: file.name, mimeType: "text/plain", buffer: Buffer.from(file.text, "utf8"),
-  }))];
-  if (files.reduce((sum, file) => sum + file.buffer.length, 0) > 50_000_000) {
-    throw new Error("ChatGPT web attachments exceed the 50 MB per-turn limit");
-  }
-  return files;
+  return chatGptImageFilePayloads(prompt.images);
 }
 
 /**
@@ -2229,7 +2175,6 @@ export class ChatGptBrowserWorker {
     temporary: true;
     url: string;
     solAvailable?: boolean;
-    extraHighAvailable?: boolean;
     proAvailable?: boolean;
   }> {
     return this.enqueueMaintenance("session inspection", () => this.inspectSessionExclusive(detectCapabilities));
@@ -2475,7 +2420,6 @@ export class ChatGptBrowserWorker {
     }
     const targetValue = sliderState.min + uiEffortIndex;
     if (targetValue > sliderState.max) {
-      const detail = uiEffortIndex === 4 ? await chatGptUnavailableProDetail(activation.menu) : undefined;
       const proUsageLimitHint = uiEffortIndex === 4 && sliderState.min === 0 && sliderState.max === 3
         ? " If you have made many Pro requests recently, ChatGPT may have temporarily hidden Pro because you reached its usage limit."
         : "";
@@ -2483,7 +2427,6 @@ export class ChatGptBrowserWorker {
         `ChatGPT effort slider does not expose item index ${uiEffortIndex}`
         + ` (min=${sliderState.min}; max=${sliderState.max})`
         + proUsageLimitHint,
-        detail,
       );
     }
     const sliderControl = effortSlider.locator("xpath=ancestor::*[@role='menuitem'][1]");
@@ -3710,7 +3653,6 @@ export class ChatGptBrowserWorker {
     temporary: true;
     url: string;
     solAvailable?: boolean;
-    extraHighAvailable?: boolean;
     proAvailable?: boolean;
   }> {
     const page = await this.ensurePage();
@@ -3786,12 +3728,7 @@ export class ChatGptBrowserWorker {
   ): Promise<ChatGptResponseDomSnapshot> {
     const observed = await responseTurn.evaluate((element, options) => {
       const root = element as HTMLElement;
-      type ObserverState = {
-        id: number;
-        revision: number;
-        observer: MutationObserver;
-        rendered: Map<HTMLElement, boolean>;
-      };
+      type ObserverState = { id: number; revision: number; observer: MutationObserver };
       type ObserverRegistry = { documentId: string; nextId: number; states: WeakMap<Element, ObserverState> };
       const scope = globalThis as typeof globalThis & {
         __CODEX_WEB_GPT_RESPONSE_OBSERVERS__?: ObserverRegistry;
@@ -3807,7 +3744,6 @@ export class ChatGptBrowserWorker {
           id: ++registry.nextId,
           revision: 0,
           observer: undefined as unknown as MutationObserver,
-          rendered: new Map<HTMLElement, boolean>(),
         };
         const state = observerState;
         state.observer = new MutationObserver(() => {
@@ -3822,45 +3758,26 @@ export class ChatGptBrowserWorker {
         });
         registry.states.set(root, state);
       }
+      const observerKey = `${registry.documentId}:${observerState.id}:${observerState.revision}`;
+      if (options.knownKey === observerKey) return { key: observerKey };
       // Browser turn WebContents are intentionally allowed to run while their Electron view is
       // hidden or has no measured width. Layout geometry is therefore not response visibility:
       // completed Markdown can have width=0 while remaining connected, rendered and readable.
-      const isRendered = (candidate: HTMLElement): boolean => {
+      const renderedInDom = (candidate: HTMLElement): boolean => {
         const style = getComputedStyle(candidate);
         return candidate.isConnected
           && style.display !== "none"
           && style.visibility !== "hidden"
           && style.opacity !== "0";
       };
-      // CSS animations and stylesheet changes can reveal an answer or its completion controls
-      // without mutating this subtree. Recheck the rendering dependencies of the cached scan;
-      // unchanged text/HTML still avoids the expensive serialization below.
-      for (const [candidate, rendered] of observerState.rendered) {
-        if (isRendered(candidate) !== rendered) {
-          observerState.revision += 1;
-          break;
-        }
-      }
-      const observerKey = `${registry.documentId}:${observerState.id}:${observerState.revision}`;
-      if (options.knownKey === observerKey) return { key: observerKey };
-      observerState.rendered.clear();
-      const renderedInDom = (candidate: HTMLElement): boolean => {
-        const rendered = isRendered(candidate);
-        observerState.rendered.set(candidate, rendered);
-        return rendered;
-      };
 
-      // ChatGPT's DIL renderer has no .markdown class (#538). Read its response root within the
-      // assistant-owned PUIK container; the CSS module hash is build-specific. Both renderers
-      // feed the same content serializer and completion checks below, without reading UI text.
-      const answerRootSelector = '.markdown, [data-message-author-role="assistant"] .puik-root.not-markdown > [class*="_DilResponseRoot"]';
-      // ChatGPT uses the same content renderer for intermediate commentary and for the final
+      // ChatGPT uses the same Markdown renderer for intermediate commentary and for the final
       // answer. Older responses nested commentary in the streaming-status container. Pro can also
       // render a completed commentary Markdown root immediately before that live status container.
       // Final-answer Markdown follows the live status instead, so DOM order remains the semantic
       // boundary without relying on localized labels such as "Pro thinking".
-      const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(answerRootSelector)]
-        .filter(candidate => !candidate.parentElement?.closest(answerRootSelector))
+      const allMarkdownRoots = [...root.querySelectorAll<HTMLElement>(".markdown")]
+        .filter(candidate => !candidate.parentElement?.closest(".markdown"))
         .filter(renderedInDom);
       const streamingStatusContainers = [...root.querySelectorAll<HTMLElement>("[data-streaming-response-status]")]
         .filter(renderedInDom);
@@ -4169,9 +4086,6 @@ export class ChatGptBrowserWorker {
       const stoppedThinkingVisible = (() => {
         // Only ChatGPT UI in the bound response may terminate the turn. A model quoting this
         // phrase in its answer or reasoning is ordinary content, not a stopped-thinking status.
-        // Match the site's observed labels regardless of the account/document language.
-        const labels = new Set<string>(options.stoppedThinkingLabels);
-        const isStoppedLabel = (value: string | null): boolean => labels.has(value?.replace(/\s+/g, " ").trim() ?? "");
         const isStatus = (candidate: HTMLElement): boolean => {
           if (overlapsRenderedAnswer(candidate) || overlapsCommentary(candidate)
             || candidate.closest("pre, code, blockquote")) return false;
@@ -4180,12 +4094,12 @@ export class ChatGptBrowserWorker {
           }
           return true;
         };
-        const ariaMatch = Array.from(root.querySelectorAll<HTMLElement>("[aria-label]"))
-          .some(candidate => isStoppedLabel(candidate.getAttribute("aria-label")) && isStatus(candidate));
+        const ariaMatch = [...root.querySelectorAll<HTMLElement>('[aria-label="Stopped thinking"]')]
+          .some(isStatus);
         if (ariaMatch) return true;
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-          if (!isStoppedLabel(node.textContent)) continue;
+          if (node.textContent?.replace(/\s+/g, " ").trim() !== "Stopped thinking") continue;
           const parent = node.parentElement;
           if (parent && isStatus(parent)) return true;
         }
@@ -4205,7 +4119,6 @@ export class ChatGptBrowserWorker {
       };
     }, {
       completionActionSelector: CHATGPT_COMPLETION_ACTION_SELECTOR,
-      stoppedThinkingLabels: [...CHATGPT_STOPPED_THINKING_LABELS],
       knownKey: cache?.key,
       attributeFilter: [...CHATGPT_DOM_REVISION_ATTRIBUTES],
     }, { timeout: 2_000 }).catch(() => undefined);
@@ -4404,8 +4317,6 @@ export class ChatGptBrowserWorker {
     let diagnosticPage: Page | undefined;
     try {
       if (turn.abortSignal?.aborted) throw new DOMException("ChatGPT web turn aborted", "AbortError");
-      // Validate only the selected physical message, not canonical history used for usage estimates.
-      assertChatGptPromptAttachments(prepared);
       const multipartTransactionId = prepared.multipart
         ? `ctx_${randomUUID().replaceAll("-", "")}`
         : undefined;
@@ -4453,7 +4364,7 @@ export class ChatGptBrowserWorker {
             stagingEffort: stagingMode.effort,
             maxStageMessageTokens,
             maxStageChars,
-            finalMessageTokens: estimateTokens(multipartFinalPrompt, turn.modelId) + skillFileTokens(prepared.skillFiles, turn.modelId),
+            finalMessageTokens: estimateTokens(multipartFinalPrompt, turn.modelId),
             finalMessageChars: multipartFinalPrompt.length,
             finalImageTokens: estimateChatGptWebImageTokens(prepared),
           } : undefined,

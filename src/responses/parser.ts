@@ -381,12 +381,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
       }
 
       if (effectiveType === "message") {
-        const msg = item as {
-          role?: string;
-          content?: unknown;
-          phase?: "commentary" | "final_answer";
-          internal_chat_message_metadata_passthrough?: { content_item_kinds?: string[] };
-        };
+        const msg = item as { role?: string; content?: unknown; phase?: "commentary" | "final_answer" };
         switch (msg.role) {
           case "system": {
             pendingReasoning.length = 0;
@@ -399,10 +394,7 @@ export function parseRequest(body: unknown): CodexParsedRequest {
           case "developer": {
             pendingReasoning.length = 0;
             const content = inputContentParts(msg.content as unknown[] | string | undefined);
-            const kinds = msg.internal_chat_message_metadata_passthrough?.content_item_kinds;
-            const selectedSkill = msg.role === "user" && kinds?.length === 1
-              && kinds[0] === "skills.selected_skill_instructions";
-            messages.push({ role: msg.role, content, timestamp: now, ...(selectedSkill ? { origin: "codex_skill" as const } : {}) });
+            messages.push({ role: msg.role, content, timestamp: now });
             break;
           }
           case "assistant": {

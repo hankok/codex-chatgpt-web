@@ -26,7 +26,6 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       showBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
-      experimentalSkillAttachments: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,
@@ -53,7 +52,6 @@ test("launcher state persists onboarding, language, and autostart atomically", (
       showBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
-      experimentalSkillAttachments: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: true,
       browserSmokeVersion: "0.2.0",
@@ -79,23 +77,12 @@ test("sidebar state accepts only bounded native shell dimensions", () => {
   assert.throws(() => validateSidebarState({ open: true, width: 900 }), /between 240 and 420/);
 });
 
-test("every supported launcher language survives a state update and reload", () => {
-  const languages = require("../electron/languages.json");
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-locale-state-"));
+test("Japanese is preserved as a supported persisted launcher language", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "codex-web-gpt-ja-state-"));
   const file = path.join(root, "state.json");
   try {
-    for (const language of Object.keys(languages)) {
-      const store = createStateStore(file);
-      store.update({ language, onboardingComplete: true });
-      assert.equal(createStateStore(file).read().language, language);
-      assert.equal(createStateStore(file).read().onboardingComplete, true);
-    }
-    for (const language of ["__proto__", "constructor", "unknown", [], {}]) {
-      fs.writeFileSync(file, JSON.stringify({ version: 1, language, onboardingComplete: true }));
-      const state = createStateStore(file).read();
-      assert.equal(state.language, null);
-      assert.equal(state.onboardingComplete, true);
-    }
+    fs.writeFileSync(file, JSON.stringify({ version: 1, language: "ja" }));
+    assert.equal(createStateStore(file).read().language, "ja");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -130,7 +117,6 @@ test("persisted sidebar corruption is repaired without changing the rest of laun
       showBrowserDuringTurns: true,
       browserInteractionMode: "automatic",
       experimentalBiggerContext: false,
-      experimentalSkillAttachments: false,
       zeroRiskProEnabled: false,
       browserSmokePassed: false,
       browserSmokeVersion: null,

@@ -10,10 +10,13 @@ test("pins the fixed tunnel-client and migrates only the previously shipped vers
 });
 
 describe("tunnel status boundary", () => {
-  test("requires the exact alias to have a locally verified ready runtime", () => {
+  test("requires the managed runtime process, health, and readiness together", () => {
     expect(parseTunnelStatus(JSON.stringify({
-      entries: [{ alias: "ours", runtime_state: "ready" }],
-    }), "ours")).toEqual({
+      process_running: true,
+      healthy: true,
+      ready: true,
+      runtime_state: "ready",
+    }))).toEqual({
       ok: true,
       processRunning: true,
       healthy: true,
@@ -21,19 +24,17 @@ describe("tunnel status boundary", () => {
       state: "ready",
       detail: "process_running=true healthy=true ready=true",
     });
-    for (const state of ["stopped", "starting", "healthy"]) {
-      expect(parseTunnelStatus(JSON.stringify({ entries: [
-        { alias: "other", runtime_state: "ready" }, { alias: "ours", runtime_state: state },
-      ] }), "ours")).toMatchObject({
-        ok: false, processRunning: state !== "stopped", healthy: state === "healthy", ready: false,
-      });
-    }
+    expect(parseTunnelStatus(JSON.stringify({
+      process_running: false,
+      healthy: true,
+      ready: true,
+      runtime_state: "ready",
+    }))).toMatchObject({ ok: false, processRunning: false, healthy: true, ready: true });
   });
 
   test("redacts tunnel ids and keys from safe diagnostics", () => {
     const result = parseTunnelStatus(
       "failed tunnel_0123456789abcdef0123456789abcdef with sk-secretsecretsecret",
-      "ours",
       1,
     );
     expect(result.detail).toBe("failed [tunnel-id] with [redacted-key]");
@@ -78,15 +79,22 @@ describe("tunnel status boundary", () => {
     expect(tunnelConnectLaunchError("not json")).toBe("tunnel-client returned non-JSON connect output");
   });
 
-  test("missing, ambiguous, or malformed local inventory cannot report ready", () => {
-    const ready = { alias: "ours", runtime_state: "ready" };
-    for (const output of ["invalid JSON", "{}", JSON.stringify({ entries: [ready, ready] }),
-      JSON.stringify({ entries: [{ ...ready, runtime_state: "unknown" }] })]) {
-      expect(parseTunnelStatus(output, "ours")).toMatchObject({ ok: false, ready: false });
-      expect(parseTunnelStatus(output, "ours").detail).toContain("invalid local inventory");
-    }
-    expect(parseTunnelStatus(JSON.stringify({ entries: [{ ...ready, alias: "other" }] }), "ours"))
-      .toMatchObject({ ok: false, processRunning: false, healthy: false, ready: false, state: "stopped" });
+  test("includes the managed runtime log tail in stopped status diagnostics", () => {
+    const result = parseTunnelStatus(JSON.stringify({
+      process_running: false,
+      healthy: false,
+      ready: false,
+      runtime_state: "stopped",
+      local: {
+        issues: ["recorded process pid is not running"],
+        log: {
+          tail: "runtime startup failed with sk-secretsecretsecret",
+        },
+      },
+    }));
+
+    expect(result.detail).toContain("runtime_log=runtime startup failed with [redacted-key]");
+    expect(result.detail).not.toContain("sk-secret");
   });
 
   test("status diagnostics do not discard stderr when a failed command also wrote stdout", () => {

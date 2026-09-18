@@ -60,7 +60,7 @@ function launcherConfig(descriptorPath, overrides = {}) {
       ? "\\\\.\\pipe\\codex-chatgpt-web-runtime-supervisor-test"
       : path.join(root, "turn-broker.sock"),
     headed: true,
-    extraHighAvailable: true, proAvailable: true,
+    proAvailable: true,
     autoApproveToolCalls: false,
     controlToken: "runtime-supervisor-control-token-0123456789abcdef",
     runtimeCommand: [process.execPath],
@@ -250,7 +250,7 @@ test("launcher runtime validation accepts native Windows paths and a named pipe"
     brokerSocketPath: "\\\\.\\pipe\\codex-chatgpt-web-runtime-supervisor-test",
     headed: true,
     solAvailable: true,
-    extraHighAvailable: true, proAvailable: true,
+    proAvailable: true,
     autoApproveToolCalls: false,
     controlToken: "runtime-supervisor-control-token-0123456789abcdef",
     runtimeCommand: ["C:\\Users\\Example\\.codex-chatgpt-web\\runtime\\bun.exe"],
@@ -782,16 +782,13 @@ test("launcher adopts a healthy native managed tunnel without spawning a foregro
     connects += 1;
     return { code: 0, output: "{}" };
   };
-  const healthFile = path.join(root, "health.url");
-  fs.writeFileSync(healthFile, health.baseUrl);
   supervisor.runTunnelCommand = async () => ({ code: 0,
-    output: JSON.stringify({ aliases: [{ alias: "codex-chatgpt-web", health_url_file: healthFile }] }) });
+    output: JSON.stringify({ local: { effective_health: { base_url: health.baseUrl } } }) });
   supervisor.startTunnelMonitor = () => { monitors += 1; };
   try {
     await supervisor.startTunnel({
       mode: "full",
       tunnel: {
-        alias: "codex-chatgpt-web",
         binaryPath,
         runtimeKeyFile,
         profileDir,
@@ -829,10 +826,8 @@ for (const existingReady of [true, false]) {
     supervisor.assertTunnelClientReady = () => {};
     supervisor.readTunnelHealth = async () => ({ ready: connected, statusKnown: true,
       state: connected ? "ready" : "stopped", processRunning: connected, pid: null });
-    const healthFile = path.join(root, "health.url");
-    fs.writeFileSync(healthFile, health.baseUrl);
     supervisor.runTunnelCommand = async () => ({ code: 0,
-      output: JSON.stringify({ aliases: [{ alias: "owned-test", health_url_file: healthFile }] }) });
+      output: JSON.stringify({ local: { effective_health: { base_url: health.baseUrl } } }) });
     supervisor.runTunnelConnectCommand = async () => { connected = true; return { code: 0 }; };
     supervisor.runTunnelStopCommand = async () => { connected = false; return { code: 0 }; };
     supervisor.waitForTunnelStopped = async () => { assert.equal(connected, false); };
@@ -935,14 +930,12 @@ test("fresh tunnel recovery discovers its official loopback diagnostics before p
     },
   };
   const commands = [];
-  const healthFile = path.join(root, "health.url");
-  fs.writeFileSync(healthFile, "http://127.0.0.1:43127\n");
   supervisor.runTunnelCommand = async (_config, args) => {
     commands.push(args);
     return {
       code: 0,
       output: JSON.stringify({
-        aliases: [{ alias: "codex-chatgpt-web", health_url_file: healthFile }],
+        local: { health: { base_url: "http://127.0.0.1:43127" } },
       }),
     };
   };
@@ -955,7 +948,7 @@ test("fresh tunnel recovery discovers its official loopback diagnostics before p
   try {
     await supervisor.waitForTunnelMcpTransport(config, 25);
     assert.equal(supervisor.tunnelHealthBaseUrl, "http://127.0.0.1:43127");
-    assert.deepEqual(commands, [["runtimes", "list", "--json"]]);
+    assert.deepEqual(commands, [["runtimes", "status", "codex-chatgpt-web", "--json"]]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -970,11 +963,9 @@ test("tunnel diagnostics discovery rejects a non-loopback endpoint", async () =>
     coreHome: root,
     browserDescriptorPath: path.join(root, "launcher.json"),
   });
-  const healthFile = path.join(root, "health.url");
-  fs.writeFileSync(healthFile, "https://example.com/healthz\n");
   supervisor.runTunnelCommand = async () => ({
     code: 0,
-    output: JSON.stringify({ aliases: [{ alias: "codex-chatgpt-web", health_url_file: healthFile }] }),
+    output: JSON.stringify({ health_url: "https://example.com/healthz" }),
   });
   try {
     await assert.rejects(
@@ -1349,8 +1340,7 @@ test("explicit launcher shutdown cancels active turns before the graceful stop",
   assert.deepEqual(actions, ["cancel-turns", "graceful-stop"]);
 });
 
-for (const reason of [undefined, "browser_surface_bootstrap_timeout", "helper_heartbeat_expired"])
-test(`launcher supervisor forwards exact trace cancellation: ${reason ?? "user close"}`, async () => {
+test("launcher supervisor requests exact browser trace cancellation", async () => {
   const supervisor = new RuntimeSupervisor({
     app: { getVersion: () => "0.2.0", isPackaged: false },
     logger: { info() {}, warn() {}, error() {} },
@@ -1362,7 +1352,7 @@ test(`launcher supervisor forwards exact trace cancellation: ${reason ?? "user c
   supervisor.daemon = { exitCode: null, signalCode: null };
   supervisor.control = async (_config, action, options) => {
     assert.equal(action, "cancel-turn");
-    assert.deepEqual(options.body, { traceId: "trace_exact", ...(reason ? { reason } : {}) });
+    assert.deepEqual(options.body, { traceId: "trace_exact" });
     assert.equal(options.timeoutMs, 15_000);
     return {
       status: "ok",
@@ -1372,7 +1362,7 @@ test(`launcher supervisor forwards exact trace cancellation: ${reason ?? "user c
     };
   };
 
-  const result = await supervisor.cancelBrowserTurn("trace_exact", reason);
+  const result = await supervisor.cancelBrowserTurn("trace_exact");
   assert.equal(result.trace_id, "trace_exact");
 });
 

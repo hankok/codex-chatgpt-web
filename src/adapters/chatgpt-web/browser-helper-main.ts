@@ -1,4 +1,3 @@
-import { validateSkillFiles } from "./skill-attachments";
 import { createInterface } from "node:readline";
 import { stdin, stderr, stdout } from "node:process";
 import type { CodexProviderConfig } from "../../types";
@@ -400,12 +399,6 @@ input.on("line", line => {
       abortControllers.get(message.id)?.abort();
       return;
     }
-    try { validateSkillFiles(prepared.skillFiles); }
-    catch (error) {
-      writeProtocol({ type: "error", id: message.id, message: error instanceof Error ? error.message : String(error) });
-      abortControllers.get(message.id)?.abort();
-      return;
-    }
     if (prepared.multipart !== undefined) {
       const multipart = prepared.multipart;
       if (!multipart || !Array.isArray(multipart.parts)
@@ -524,4 +517,4 @@ process.once("SIGTERM", () => {
 });
 
 // Advertise the optional frames this helper understands so the daemon can negotiate them explicitly.
-writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack", "skill-attachments"] });
+writeProtocol({ type: "ready", features: ["progress", "tool-boundary-ack", "completion-fence", "multipart-stage-ack"] });
