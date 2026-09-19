@@ -889,6 +889,7 @@ export function createChatGptWebAdapter(
                     compactionTraceId,
                     handoffTraceId,
                     `${handoffTraceId}_fallback`,
+                    `${handoffTraceId}_retry`,
                   ],
                   ...(compactionNativeIdentity.threadId
                     ? { nativeThreadId: compactionNativeIdentity.threadId }
@@ -927,28 +928,36 @@ export function createChatGptWebAdapter(
                   const sourceConversationKey = chatGptConversationKey(parsed, executionNamespace);
                   const runFreshCompactionFallback = async (reason: string): Promise<string> => {
                     console.warn(`[chatgpt-web] retained compaction fallback=${reason}`);
-                    // The fallback is a new bounded phase. Each exact multipart acknowledgement
-                    // and the final accepted compact prompt re-arms the five-minute liveness budget;
-                    // transport time cannot consume the model-generation window.
-                    armHandoffDeadline();
-                    const fallbackRuntime = startRuntime(
-                      parsed,
-                      manualRequest ? environment : undefined,
-                      `${handoffTraceId}_fallback`,
-                      turnCapabilities,
-                      { onCompactionProgress: armHandoffDeadline },
-                    );
-                    retainOwnershipUntil(fallbackRuntime.physicalSettlement);
-                    try {
-                      const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
-                      await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
-                      return canonicalizeCompactionHandoff(parsed, rawSummary);
-                    } catch (error) {
-                      fallbackRuntime.cancel(error instanceof Error ? error : new Error(String(error)));
-                      // The shared owner retains physical settlement independently of this error.
-                      // Neither a timeout nor operator cancellation can open a competing trace.
-                      throw error;
+                    for (let attempt = 0; attempt < 2; attempt += 1) {
+                      // Every attempt owns a fresh Launcher browser tab. If the first attempt
+                      // fails, wait for its browser/helper settlement before opening the retry tab
+                      // so compaction never races two ChatGPT documents for one Codex turn.
+                      armHandoffDeadline();
+                      const attemptTraceId = attempt === 0
+                        ? `${handoffTraceId}_fallback`
+                        : `${handoffTraceId}_retry`;
+                      const fallbackRuntime = startRuntime(
+                        parsed,
+                        manualRequest ? environment : undefined,
+                        attemptTraceId,
+                        turnCapabilities,
+                        { onCompactionProgress: armHandoffDeadline },
+                      );
+                      retainOwnershipUntil(fallbackRuntime.physicalSettlement);
+                      try {
+                        const rawSummary = await withAbort(fallbackRuntime.browser, operationSignal);
+                        await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
+                        return canonicalizeCompactionHandoff(parsed, rawSummary);
+                      } catch (error) {
+                        fallbackRuntime.cancel(error instanceof Error ? error : new Error(String(error)));
+                        if (operationSignal.aborted || attempt > 0) throw error;
+                        await withAbort(fallbackRuntime.physicalSettlement, operationSignal);
+                        console.warn(
+                          `[chatgpt-web] fresh compaction tab failed (${error instanceof Error ? error.message : String(error)}); opening a new tab and retrying once`,
+                        );
+                      }
                     }
+                    throw new Error("Fresh compaction retry loop exited unexpectedly");
                   };
                   let source: ChatGptTurnSession | undefined;
                   let preserveFinalResponse = false;

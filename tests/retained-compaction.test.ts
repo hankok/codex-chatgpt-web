@@ -1264,6 +1264,59 @@ test.each([false, true])("structured compact rebuilds canonical context when its
   }
 });
 
+test("a failed fresh compaction tab is closed before one replacement tab retries the compaction", async () => {
+  const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-fresh-compaction-retry-"));
+  const provider: CodexProviderConfig = {
+    adapter: "chatgpt-web",
+    baseUrl: `browser://fresh-compaction-retry-${Date.now()}`,
+    chatgptWeb: {
+      browserHost: "launcher",
+      browserHostDescriptorPath: join(root, "launcher.json"),
+      brokerSocketPath: defaultBrokerEndpoint(root),
+      localToolsEnabled: true,
+      solAvailable: true,
+      proAvailable: true,
+    },
+  };
+  const worker = ChatGptBrowserWorker.forProvider(provider);
+  const originalRun = worker.run.bind(worker);
+  const traces: string[] = [];
+  let firstAttemptSettled = false;
+  (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+    traces.push(turn.traceId);
+    expect(turn.compaction).toBeTrue();
+    expect(turn.requireRetainedConversation).toBeUndefined();
+    if (traces.length === 1) {
+      try {
+        throw new Error("first fresh compaction tab failed");
+      } finally {
+        firstAttemptSettled = true;
+      }
+    }
+    expect(firstAttemptSettled).toBeTrue();
+    return "Checkpoint from replacement compaction tab";
+  };
+  const events: AdapterEvent[] = [];
+  try {
+    await createChatGptWebAdapter(provider).runTurn!(
+      request(true),
+      { headers: new Headers() },
+      event => events.push(event),
+    );
+    expect(traces).toHaveLength(2);
+    expect(traces[0]).toEndWith("_fallback");
+    expect(traces[1]).toEndWith("_retry");
+    expect(traces[0]).not.toBe(traces[1]);
+    expect(events.some(event => event.type === "text_delta"
+      && event.text.includes("Checkpoint from replacement compaction tab"))).toBeTrue();
+    expect(events.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+  } finally {
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+    await TurnBroker.forSocket(provider.chatgptWeb!.brokerSocketPath!).close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("fresh multipart compaction gives each acknowledged phase its own handoff budget", async () => {
   const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-phased-fallback-compact-"));
   const provider: CodexProviderConfig = {
