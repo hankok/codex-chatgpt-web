@@ -16,6 +16,13 @@ const {
   Tray,
 } = require("electron");
 const { BrowserHost, navigationErrorForLog } = require("./browser-host.cjs");
+const {
+  CodexStreamRecoveryMonitor,
+  clearPendingRecovery,
+  readPendingRecovery,
+  sendRetryToCodexThread,
+  writePendingRecovery,
+} = require("./codex-stream-recovery.cjs");
 const { BrowserControlServer } = require("./control-server.cjs");
 const { getAutostart, setAutostart } = require("./autostart.cjs");
 const {
@@ -70,6 +77,7 @@ fs.mkdirSync(launcherUserData, { recursive: true, mode: 0o700 });
 if (process.platform !== "win32") fs.chmodSync(launcherUserData, 0o700);
 app.setPath("userData", launcherUserData);
 app.setAppLogsPath(path.join(launcherUserData, "logs"));
+const CODEX_STREAM_RECOVERY_PATH = path.join(launcherUserData, "codex-stream-recovery.json");
 installProcessDiagnosticGuards({
   filePath: path.join(launcherUserData, "logs", "process-stream-errors.log"),
 });
@@ -81,6 +89,7 @@ let browserHost = null;
 let runtimeHost = null;
 let browserControl = null;
 let runtimeSupervisor = null;
+let codexStreamRecoveryMonitor = null;
 let tray = null;
 let quitting = false;
 let shutdownInProgress = false;
@@ -875,6 +884,7 @@ async function requestQuit() {
     if (activeOperation) {
       throw new Error(`Wait for ${activeOperation} to finish before quitting Codex Web GPT`);
     }
+    codexStreamRecoveryMonitor?.stop();
     await runtimeSupervisor?.shutdown({ cancelActiveTurns: true, force: true });
     stopCatalogVerificationMonitor();
     quitting = true;
@@ -893,6 +903,107 @@ async function requestQuit() {
   } finally {
     shutdownInProgress = false;
   }
+}
+
+async function relaunchAfterCodexStreamFailure(failure, { logger, stateStore }) {
+  if (shutdownInProgress || exitCommitted) {
+    throw new Error("Launcher shutdown is already in progress");
+  }
+  shutdownInProgress = true;
+  codexStreamRecoveryMonitor?.stop();
+  stopCatalogVerificationMonitor();
+  publishOperation({
+    name: "codex-stream-recovery",
+    status: "running",
+    message: "Restarting ChatGPT Web after a Codex stream disconnect",
+  });
+  let pendingWritten = false;
+  try {
+    await browserHost?.persistSession();
+    writePendingRecovery(CODEX_STREAM_RECOVERY_PATH, failure);
+    pendingWritten = true;
+    const stopped = await runtimeSupervisor?.shutdown({ cancelActiveTurns: true, force: true });
+    if (stopped?.status === "forced-partial") {
+      throw new Error(`Runtime shutdown was incomplete: ${(stopped.failures || []).join("; ") || "unknown failure"}`);
+    }
+  } catch (error) {
+    if (pendingWritten) clearPendingRecovery(CODEX_STREAM_RECOVERY_PATH);
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      const restarted = await runtimeSupervisor?.startIfConfigured();
+      if (restarted?.status === "ready") startCatalogVerificationMonitor({ logger, stateStore });
+    } catch (restartError) {
+      logger.error("codex.stream_recovery_rollback_failed", {
+        message: restartError instanceof Error ? restartError.message : String(restartError),
+      });
+    }
+    codexStreamRecoveryMonitor?.start();
+    publishOperation({ name: "codex-stream-recovery", status: "failed", message });
+    shutdownInProgress = false;
+    throw error;
+  }
+
+  quitting = true;
+  try { browserHost?.destroy(); }
+  catch (error) {
+    logger.warn("codex.stream_recovery_browser_cleanup_failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try { await browserControl?.close(); }
+  catch (error) {
+    logger.warn("codex.stream_recovery_control_cleanup_failed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+  logger.warn("codex.stream_recovery_relaunching", {
+    threadId: failure.threadId,
+    turnId: failure.turnId,
+    source: failure.source,
+  });
+  app.relaunch();
+  exitCommitted = true;
+  app.quit();
+}
+
+async function finishPendingCodexStreamRecovery(pending, { logger }) {
+  if (!pending) return;
+  publishOperation({
+    name: "codex-stream-recovery",
+    status: "running",
+    message: "ChatGPT Web restarted; sending retry to Codex",
+  });
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await sendRetryToCodexThread(pending.threadId, pending.turnId);
+      clearPendingRecovery(CODEX_STREAM_RECOVERY_PATH);
+      logger.warn("codex.stream_recovery_completed", {
+        threadId: pending.threadId,
+        turnId: pending.turnId,
+        source: pending.source,
+        attempt,
+      });
+      publishOperation({
+        name: "codex-stream-recovery",
+        status: "completed",
+        message: "ChatGPT Web restarted and retry was sent to Codex",
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      logger.warn("codex.stream_recovery_retry_send_failed", {
+        threadId: pending.threadId,
+        turnId: pending.turnId,
+        attempt,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1_000));
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : String(lastError || "unknown error");
+  publishOperation({ name: "codex-stream-recovery", status: "failed", message });
+  return { status: "failed", message };
 }
 
 async function start() {
@@ -960,6 +1071,16 @@ async function start() {
     filePath: path.join(app.getPath("logs"), "launcher.jsonl"),
     publish: (record) => send("launcher:log", record),
   });
+  const pendingStreamRecovery = IS_DEV_PROFILE
+    ? null
+    : readPendingRecovery(CODEX_STREAM_RECOVERY_PATH);
+  if (pendingStreamRecovery) {
+    logger.warn("codex.stream_recovery_pending", {
+      threadId: pendingStreamRecovery.threadId,
+      turnId: pendingStreamRecovery.turnId,
+      source: pendingStreamRecovery.source,
+    });
+  }
   const startHidden = process.argv.includes("--hidden") && stateStore.read().onboardingComplete;
   nativeTheme.themeSource = "system";
   mainWindow = createWindow({
@@ -1020,6 +1141,14 @@ async function start() {
     getBrowserInteractionMode: () => stateStore.read().browserInteractionMode,
   });
   await browserHost.ready();
+  if (!IS_DEV_PROFILE) {
+    codexStreamRecoveryMonitor = new CodexStreamRecoveryMonitor({
+      codexHome: LAUNCHER_PROFILE.codexHome,
+      logger,
+      recover: failure => relaunchAfterCodexStreamFailure(failure, { logger, stateStore }),
+    });
+    codexStreamRecoveryMonitor.start();
+  }
   const updaterRuntimeRoot = runtimeRootProvider();
   updateController = createUpdateController({
     currentVersion: app.getVersion(),
@@ -1186,6 +1315,9 @@ async function start() {
         send("launcher:state-changed", state);
       }
       startCatalogVerificationMonitor({ logger, stateStore });
+      if (pendingStreamRecovery) {
+        await finishPendingCodexStreamRecovery(pendingStreamRecovery, { logger });
+      }
       return;
     }
     if (runtime.status === "not-configured") {
