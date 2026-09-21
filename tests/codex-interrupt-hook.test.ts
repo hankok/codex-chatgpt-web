@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  MANAGED_INTERRUPT_HOOK_START,
   MANAGED_INTERRUPT_HOOK_END,
   codexInterruptHookCommand,
   codexInterruptHookHash,
@@ -33,6 +34,47 @@ test("installs one narrowly trusted Interrupt hook and restores the exact Codex 
   verifyCodexInterruptHook(installed.text, installed.installed);
   expect(restoreCodexInterruptHook(installed.text, installed.installed)).toBe(original);
   verifyCodexInterruptHookRestored(original);
+});
+
+test("restores a Windows hook after Codex moves its literal-quoted trust state before the hook", () => {
+  const original = [
+    'model = "example"',
+    "",
+    "[hooks.state]",
+    "",
+    "[hooks.state.'existing:stop:0:0']",
+    'trusted_hash = "sha256:existing"',
+    "",
+  ].join("\n");
+  const installed = installCodexInterruptHook(original, "/Users/test/.codex/config.toml", {
+    runtimeCommand: ["/opt/runtime"],
+  });
+  const stateKey = String.raw`C:\Users\test\.codex\config.toml:interrupt:0:0`;
+  const originalHeader = `[hooks.state.${JSON.stringify(installed.installed.stateKey)}]`;
+  const journalHeader = `[hooks.state.${JSON.stringify(stateKey)}]`;
+  const literalHeader = `[hooks.state.'${stateKey}']`;
+  const journal = {
+    ...installed.installed,
+    stateKey,
+    fragment: installed.installed.fragment.replace(originalHeader, journalHeader),
+  };
+  const stateBlock = `${journalHeader}\ntrusted_hash = ${JSON.stringify(journal.trustedHash)}\n`;
+  const literalStateBlock = `${literalHeader}\ntrusted_hash = ${JSON.stringify(journal.trustedHash)}\n`;
+  const installedText = installed.text.replace(originalHeader, journalHeader);
+  const withoutState = installedText.replace(stateBlock, "")
+    .replace("timeout = 3\n\n", "timeout = 3\n");
+  const hookOffset = withoutState.indexOf(MANAGED_INTERRUPT_HOOK_START);
+  const edited = withoutState.slice(0, hookOffset) + literalStateBlock + withoutState.slice(hookOffset);
+
+  expect(Bun.TOML.parse(edited)).toEqual(Bun.TOML.parse(installedText));
+  verifyCodexInterruptHook(edited, journal);
+  const restored = restoreCodexInterruptHook(edited, journal);
+  expect(Bun.TOML.parse(restored)).toEqual(Bun.TOML.parse(original));
+  verifyCodexInterruptHookRestored(restored);
+  expect(() => restoreCodexInterruptHook(
+    edited.replace("timeout = 3", "timeout = 2"),
+    journal,
+  )).toThrow("changed after setup");
 });
 
 test("trusts the canonical Codex config path before a new config file exists", () => {
