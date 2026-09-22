@@ -178,6 +178,74 @@ const settleChatGptUi = (): Promise<void> => (
   new Promise(resolveSettle => setTimeout(resolveSettle, CHATGPT_UI_SETTLE_MS))
 );
 
+const CHATGPT_TEMPORARY_CHAT_NAVIGATION_TIMEOUT_MS = 60_000;
+
+function isAbortedChatGptNavigation(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bnet::ERR_ABORTED\b/i.test(message);
+}
+
+function isChatGptPageUrl(url: string): boolean {
+  try {
+    return new URL(url).origin === new URL(CHATGPT_TEMPORARY_CHAT_URL).origin;
+  } catch {
+    return false;
+  }
+}
+
+export async function navigateToTemporaryChatWithRecovery(
+  page: Pick<Page, "goto" | "isClosed" | "reload" | "url">,
+  options: {
+    abortSignal?: AbortSignal;
+    captureDiagnostic?: (checkpoint: string) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const navigationOptions = {
+    waitUntil: "domcontentloaded" as const,
+    timeout: CHATGPT_TEMPORARY_CHAT_NAVIGATION_TIMEOUT_MS,
+  };
+  const throwIfAborted = () => {
+    if (options.abortSignal?.aborted) {
+      throw options.abortSignal.reason ?? new DOMException("ChatGPT web turn aborted", "AbortError");
+    }
+  };
+  const captureRecoveryDiagnostic = async (checkpoint: string) => {
+    try {
+      await options.captureDiagnostic?.(checkpoint);
+    } catch {
+      console.warn("[chatgpt-web] Temporary Chat recovery diagnostic capture failed");
+    }
+  };
+
+  try {
+    await page.goto(CHATGPT_TEMPORARY_CHAT_URL, navigationOptions);
+    return;
+  } catch (error) {
+    if (!isAbortedChatGptNavigation(error) || page.isClosed()) throw error;
+    throwIfAborted();
+    await captureRecoveryDiagnostic("temporary-chat-navigation-aborted");
+    console.warn("[chatgpt-web] Temporary Chat navigation was aborted; reloading the page before retrying");
+
+    let reloaded = false;
+    if (isChatGptPageUrl(page.url())) {
+      try {
+        await page.reload(navigationOptions);
+        reloaded = true;
+      } catch (reloadError) {
+        if (page.isClosed()) throw reloadError;
+      }
+    }
+
+    throwIfAborted();
+    if (page.isClosed()) throw error;
+    if (!reloaded || page.url() !== CHATGPT_TEMPORARY_CHAT_URL) {
+      await page.goto(CHATGPT_TEMPORARY_CHAT_URL, navigationOptions);
+    }
+    await captureRecoveryDiagnostic("temporary-chat-navigation-recovered");
+    console.info("[chatgpt-web] Temporary Chat page recovered after an aborted navigation");
+  }
+}
+
 class ChatGptConnectorCatalogStaleError extends Error {
   constructor(
     readonly appName: string,
@@ -2496,16 +2564,14 @@ export class ChatGptBrowserWorker {
   private async prepareTemporaryChatSurface(
     page: Page,
     captureDiagnostic?: (checkpoint: string) => Promise<void>,
+    abortSignal?: AbortSignal,
   ): Promise<Locator> {
     // Launcher verification refreshes its owned page before attaching Playwright so a newly added
     // connector is present in the catalog. Navigating again here destroys that freshly hydrated
     // document and made the first verification race a second SPA bootstrap. A leased turn starts on
     // about:blank and therefore still performs exactly one navigation through this same method.
     if (page.url() !== CHATGPT_TEMPORARY_CHAT_URL) {
-      await page.goto(CHATGPT_TEMPORARY_CHAT_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 60_000,
-      });
+      await navigateToTemporaryChatWithRecovery(page, { captureDiagnostic, abortSignal });
       await captureDiagnostic?.("temporary-chat-navigation-complete");
     }
     let composer: Locator;
@@ -4526,9 +4592,10 @@ export class ChatGptBrowserWorker {
           turn.traceId,
           "temporary_chat_preparation",
           browserStageTimeouts.temporaryChatPreparation,
-          () => this.prepareTemporaryChatSurface(
+          (stageSignal) => this.prepareTemporaryChatSurface(
             page,
             checkpoint => diagnostics.capture(page, checkpoint),
+            turn.abortSignal ? AbortSignal.any([stageSignal, turn.abortSignal]) : stageSignal,
           ),
         );
       }

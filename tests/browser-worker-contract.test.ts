@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import type { Page } from "playwright-core";
 import { CHATGPT_BROWSER_OBSERVATION_POLL_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS, CHATGPT_TOOL_COMPLETION_SETTLE_MS, ChatGptCompletionTracker, chatGptCompletionSettleMs, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
-import { ensureChatGptPersonalizedConnectorAccess } from "../src/adapters/chatgpt-web/browser-worker";
+import { ensureChatGptPersonalizedConnectorAccess, navigateToTemporaryChatWithRecovery } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
 import { CHATGPT_CONNECTOR_NAME, DEV_CHATGPT_CONNECTOR_NAME, defaultChromeExecutable, legacyChatGptConnectorMigrationMessage } from "../src/config";
@@ -4034,3 +4034,79 @@ test("a stage that spans a system sleep is not charged for the slept time", asyn
   await stage;
   expect(outcome).toEqual(["ChatGPT browser stage timed out: probe"]);
 }, 10_000);
+
+test("pre-send Temporary Chat navigation reloads the page after ERR_ABORTED", async () => {
+  const checkpoints: string[] = [];
+  let currentUrl = "https://chatgpt.com/?temporary-chat=true";
+  let gotoCount = 0;
+  let reloadCount = 0;
+  const page = {
+    isClosed: () => false,
+    url: () => currentUrl,
+    goto: async () => {
+      gotoCount += 1;
+      throw new Error("page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true");
+    },
+    reload: async () => { reloadCount += 1; },
+  };
+
+  await navigateToTemporaryChatWithRecovery(page as never, {
+    captureDiagnostic: async checkpoint => { checkpoints.push(checkpoint); },
+  });
+
+  expect(gotoCount).toBe(1);
+  expect(reloadCount).toBe(1);
+  expect(checkpoints).toEqual([
+    "temporary-chat-navigation-aborted",
+    "temporary-chat-navigation-recovered",
+  ]);
+});
+
+test("an aborted navigation from a leased blank page retries even if diagnostics fail", async () => {
+  let currentUrl = "about:blank";
+  let gotoCount = 0;
+  let reloadCount = 0;
+  let diagnosticCount = 0;
+  const page = {
+    isClosed: () => false,
+    url: () => currentUrl,
+    goto: async (url: string) => {
+      gotoCount += 1;
+      if (gotoCount === 1) {
+        throw new Error("page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true");
+      }
+      currentUrl = url;
+    },
+    reload: async () => { reloadCount += 1; },
+  };
+
+  await navigateToTemporaryChatWithRecovery(page as never, {
+    captureDiagnostic: async () => {
+      diagnosticCount += 1;
+      throw new Error("diagnostic unavailable");
+    },
+  });
+
+  expect(gotoCount).toBe(2);
+  expect(reloadCount).toBe(0);
+  expect(diagnosticCount).toBe(2);
+});
+
+test("Temporary Chat navigation does not recover after turn cancellation", async () => {
+  const controller = new AbortController();
+  let reloadCount = 0;
+  const page = {
+    isClosed: () => false,
+    url: () => "https://chatgpt.com/?temporary-chat=true",
+    goto: async () => {
+      controller.abort();
+      throw new Error("page.goto: net::ERR_ABORTED at https://chatgpt.com/?temporary-chat=true");
+    },
+    reload: async () => { reloadCount += 1; },
+  };
+
+  await expect(navigateToTemporaryChatWithRecovery(page as never, {
+    abortSignal: controller.signal,
+  })).rejects.toThrow("aborted");
+  expect(reloadCount).toBe(0);
+});
