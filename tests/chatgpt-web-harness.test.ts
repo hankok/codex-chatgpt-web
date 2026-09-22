@@ -1761,6 +1761,30 @@ describe("ChatGPT outer-native harness v4", () => {
     });
   });
 
+  test("streams the stable final DOM block when ChatGPT exposes completion controls", () => {
+    const buffer = new ChatGptMarkdownBuffer(markdown => markdown, 100);
+    const tail = {
+      key: "last:paragraph",
+      html: "<p>The clarification is: use the 20-day average return.</p>",
+      text: "The clarification is: use the 20-day average return.",
+      streamable: false,
+    };
+
+    expect(buffer.observe([tail], 0, false)).toBe("");
+    // A long-stable block still waits while ChatGPT has not exposed completion evidence.
+    expect(buffer.observe([tail], 1_000, false)).toBe("");
+    // Completion controls must be present for the whole Markdown stability window before release.
+    expect(buffer.observe([tail], 1_100, true)).toBe("");
+    expect(buffer.observe([tail], 1_199, true)).toBe("");
+    expect(buffer.observe([tail], 1_200, true)).toBe(
+      "The clarification is: use the 20-day average return.",
+    );
+    expect(buffer.finish()).toEqual({
+      markdown: "The clarification is: use the 20-day average return.",
+      delta: "",
+    });
+  });
+
   test("turns Obsidian wiki links into file links without treating them as LaTeX", () => {
     expect(chatGptHtmlToMarkdown(
       "<p>Sources: [[Projects/sample-roadmap]] · [[Notes/example]]</p>",

@@ -180,8 +180,10 @@ export class ChatGptMarkdownConsistencyError extends Error {
  * not a safe commit boundary. It can also virtualize an already-rendered prefix, so later DOM
  * snapshots are partial observations rather than the response ledger. The browser supplies source
  * ranges for semantic blocks and marks a block streamable only after a following block exists.
- * Once committed, a missing prefix is harmless; changing text at a committed source range remains
- * an explicit protocol error because Responses deltas cannot be retracted.
+ * When the worker has independent evidence that a non-tool turn is complete, `observe` can release
+ * its final block after the same stability window. Once committed, a missing prefix is harmless;
+ * changing text at a committed source range remains an explicit protocol error because Responses
+ * deltas cannot be retracted.
  */
 export class ChatGptMarkdownBuffer {
   private readonly candidates = new Map<string, ChatGptMarkdownCandidate>();
@@ -200,17 +202,26 @@ export class ChatGptMarkdownBuffer {
     }
   }
 
-  observe(segments: ChatGptMarkdownSegment[], now = Date.now()): string {
+  observe(
+    segments: ChatGptMarkdownSegment[],
+    now = Date.now(),
+    terminalTailReady = false,
+  ): string {
     const reconciled = this.reconcile(segments);
     if (reconciled instanceof ChatGptMarkdownConsistencyError) {
       this.consistencyError = reconciled;
       return "";
     }
+    const streamableSegments = terminalTailReady && reconciled.length > 0
+      ? reconciled.map((segment, index) => index === reconciled.length - 1
+        ? { ...segment, streamable: true }
+        : segment)
+      : reconciled;
     this.consistencyError = undefined;
-    this.latest = reconciled.map(segment => ({ ...segment }));
+    this.latest = streamableSegments.map(segment => ({ ...segment }));
 
     const visibleCandidates = new Set<string>();
-    for (const segment of reconciled) {
+    for (const segment of streamableSegments) {
       const candidateId = this.candidateId(segment);
       visibleCandidates.add(candidateId);
       const previous = this.candidates.get(candidateId);
@@ -238,8 +249,8 @@ export class ChatGptMarkdownBuffer {
 
     let delta = "";
     let committedCount = 0;
-    while (committedCount < reconciled.length) {
-      const segment = reconciled[committedCount]!;
+    while (committedCount < streamableSegments.length) {
+      const segment = streamableSegments[committedCount]!;
       const candidateId = this.candidateId(segment);
       const candidate = this.candidates.get(candidateId);
       if (!candidate?.streamable || candidate.streamableAt === undefined) break;

@@ -4978,7 +4978,19 @@ export class ChatGptBrowserWorker {
           }
           const textDelta = (() => {
             try {
-              return markdownBuffer.observe(snapshot.markdownSegments);
+              // In turns without local tools, ChatGPT's response-scoped completion controls are
+              // enough to release the final stable Markdown block. The turn itself still observes
+              // the configured long settle window before it returns. Tool-capable turns keep the
+              // tail buffered because the page can look complete between MCP calls.
+              const terminalTailReady = !mode.localTools
+                && turn.externalProgress === undefined
+                && chatGptTurnIsComplete({
+                responsePresent: snapshot.responsePresent,
+                running,
+                currentText: snapshot.visibleText,
+                completionActionVisible: snapshot.completionActionVisible,
+              });
+              return markdownBuffer.observe(snapshot.markdownSegments, Date.now(), terminalTailReady);
             } catch (error) {
               return throwMarkdownConsistencyError(error);
             }
