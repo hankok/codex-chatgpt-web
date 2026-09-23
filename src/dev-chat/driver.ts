@@ -422,7 +422,6 @@ export class DevChatDriver {
   open(name: string, requestedModel?: DevChatModel): { state: DevChatState; created: boolean } {
     const model = requestedModel ?? defaultDevChatModel(this.config);
     requireChatGptWebModelRoute(model, this.config);
-    this.assertBiggerContextModel(model);
     const opened = this.store.loadOrCreate(name, model, this.cwd);
     if (resolve(opened.state.cwd) !== resolve(this.cwd)) {
       throw new Error(`DEV chat ${JSON.stringify(name)} belongs to ${opened.state.cwd}; use another name for ${this.cwd}`);
@@ -432,14 +431,12 @@ export class DevChatDriver {
       this.store.save(opened.state);
     }
     requireChatGptWebModelRoute(opened.state.model, this.config);
-    this.assertBiggerContextModel(opened.state.model);
     if (opened.created) this.store.save(opened.state);
     return opened;
   }
 
   setModel(state: DevChatState, model: DevChatModel): void {
     requireChatGptWebModelRoute(model, this.config);
-    this.assertBiggerContextModel(model);
     state.model = model;
     this.store.save(state);
   }
@@ -577,14 +574,6 @@ export class DevChatDriver {
     return !isLunaDevChatModel(state.model) && context.inputTokens >= context.autoCompactTokenLimit;
   }
 
-  private assertBiggerContextModel(model: DevChatModel): void {
-    if (this.features.biggerContext && isLunaDevChatModel(model)) {
-      throw new Error(
-        "Bigger Context is unavailable for Luna because its accumulated browser transcript still shares one 28,000-token transport budget",
-      );
-    }
-  }
-
   private statusForInput(state: DevChatState, turnId: string, input: unknown[]): DevContextStatus {
     const parsed = parseRequest(requestBody(
       state,
@@ -601,7 +590,7 @@ export class DevChatDriver {
       extraHighAvailable: this.config.extraHighAvailable === true,
       proAvailable: this.config.proAvailable,
     });
-    const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, this.config);
+    const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, this.config, route.slug);
     const autoCompactTokenLimit = limits.autoCompactTokenLimit;
     const contextWindow = limits.contextWindow;
     return {

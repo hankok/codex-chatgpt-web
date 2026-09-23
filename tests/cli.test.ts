@@ -137,6 +137,34 @@ test("setup browser-interaction flags are explicit and mutually exclusive", asyn
   }
 });
 
+test("setup accepts repeated per-Web-model context profile flags in preflight", async () => {
+  const root = mkdtempSync(join(tmpdir(), "codex-web-context-profile-cli-"));
+  try {
+    const env = {
+      ...process.env,
+      CODEX_HOME: join(root, "codex"),
+      CODEX_CHATGPT_WEB_HOME: join(root, "app"),
+    };
+    const ok = await runCli([
+      "setup", "--browser-only", "--preflight-only", "--acknowledge-unofficial",
+      "--browser-host-descriptor", join(root, "launcher-browser.json"),
+      "--chatgpt-web-context-profile", "chatgpt-web/gpt-5.6-sol=512k",
+      "--chatgpt-web-context-profile", "chatgpt-web/gpt-5.6-pro=1m",
+    ], env);
+    expect(ok.exitCode).toBe(0);
+    expect(ok.stdout).toContain("Setup preflight complete");
+
+    const bad = await runCli([
+      "setup", "--browser-only", "--preflight-only", "--acknowledge-unofficial",
+      "--chatgpt-web-context-profile", "chatgpt-web/gpt-5.6-sol=2m",
+    ], env);
+    expect(bad.exitCode).toBe(1);
+    expect(bad.stderr).toContain("--chatgpt-web-context-profile");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("manual setup rejects capability refresh and Bigger Context", async () => {
   const root = mkdtempSync(join(tmpdir(), "codex-chatgpt-web-cli-manual-invalid-"));
   try {

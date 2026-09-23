@@ -1322,7 +1322,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test("prompt preparation preserves its error instead of exposing a revoked MCP token", async () => {
+  test("legacy Bigger Context leaves Luna on its default single-part transport", async () => {
     const socketPath = brokerTestEndpoint(`cgw-prepare-error-${process.pid}-${Date.now()}`);
     const provider: CodexProviderConfig = {
       adapter: "chatgpt-web",
@@ -1339,21 +1339,71 @@ describe("ChatGPT outer-native harness v4", () => {
     const worker = ChatGptBrowserWorker.forProvider(provider);
     const originalRun = worker.run.bind(worker);
     (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
-      await turn.prepare();
-      throw new Error("Invalid Luna multipart preparation unexpectedly succeeded");
+      const prepared = await turn.prepare();
+      expect(prepared.multipart).toBeUndefined();
+      const answer = "Luna default transport ok";
+      turn.onTextDelta(answer);
+      return answer;
     };
     try {
       const request = rawWireRequest(environmentXml);
       request.modelId = "gpt-5.6-luna";
       request.options.reasoning = "low";
       const events: AdapterEvent[] = [];
-      await expect(createChatGptWebAdapter(provider).runTurn!(
+      await createChatGptWebAdapter(provider).runTurn!(
         request, { headers: new Headers() }, event => events.push(event),
-      )).rejects.toThrow("Bigger Context is unavailable for Luna");
+      );
       expect(events.some(event => event.type === "tool_call_start")).toBeFalse();
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
       await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
+  test("six-part multipart is enabled only by an explicit per-route context profile", async () => {
+    for (const scenario of [
+      { name: "default", legacyBigger: true, profiles: {}, expectedParts: undefined },
+      {
+        name: "512k",
+        legacyBigger: false,
+        profiles: { "chatgpt-web/gpt-5.6-sol": "512k" as const },
+        expectedParts: 6,
+      },
+    ]) {
+      const socketPath = brokerTestEndpoint(`cgw-context-profile-multipart-${scenario.name}-${process.pid}-${Date.now()}`);
+      const provider: CodexProviderConfig = {
+        adapter: "chatgpt-web",
+        baseUrl: `browser://context-profile-multipart-${scenario.name}-${Date.now()}`,
+        chatgptWeb: {
+          brokerSocketPath: socketPath,
+          localToolsEnabled: false,
+          solAvailable: true,
+          extraHighAvailable: false,
+          proAvailable: false,
+          experimentalBiggerContext: scenario.legacyBigger,
+          chatgptWebContextProfiles: scenario.profiles,
+        },
+      };
+      const worker = ChatGptBrowserWorker.forProvider(provider);
+      const originalRun = worker.run.bind(worker);
+      let observedParts: number | undefined;
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+        observedParts = (await turn.prepare()).multipart?.parts.length;
+        const answer = "profile transport ok";
+        turn.onTextDelta(answer);
+        return answer;
+      };
+      try {
+        const request = rawWireRequest(environmentXml);
+        request.modelId = "gpt-5.6-sol";
+        request.options.reasoning = "high";
+        (request as any)._chatgptWebRouteSlug = "chatgpt-web/gpt-5.6-sol";
+        await createChatGptWebAdapter(provider).runTurn!(request, { headers: new Headers() }, () => {});
+        expect(observedParts).toBe(scenario.expectedParts);
+      } finally {
+        (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+        await TurnBroker.forSocket(socketPath).close();
+      }
     }
   });
 
@@ -3370,7 +3420,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const client = new Client({ name: "codex-chatgpt-web-mcp-abort-test", version: "1.0.0" });
 
     try {
-      expect(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS).toBe(110_000);
+      expect(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS).toBe(1_200_000);
       expect(chatGptMcpInvocationTimeout(environment)).toBe(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS);
       expect(chatGptMcpInvocationTimeout({ ...environment, expiresAt: 1_500 }, 1_000)).toBe(500);
       await client.connect(transport);

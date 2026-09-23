@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
-import { isChatGptWebZeroRiskBackendModel } from "../../chatgpt-web-models";
+import {
+  isChatGptWebZeroRiskBackendModel,
+  isConfigurableChatGptWebContextProfileSlug,
+} from "../../chatgpt-web-models";
 import { defaultBrokerEndpoint, expandUserPath, resolveBrokerEndpoint } from "../../config";
 import {
   cancelLauncherManualTurn,
@@ -360,11 +363,18 @@ export function createChatGptWebAdapter(
   if (experimentalBiggerContext !== undefined && typeof experimentalBiggerContext !== "boolean") {
     throw new Error("ChatGPT Bigger Context preference must be a boolean");
   }
+  const chatgptWebContextProfiles = provider.chatgptWeb?.chatgptWebContextProfiles ?? {};
+  if (!chatgptWebContextProfiles || typeof chatgptWebContextProfiles !== "object" || Array.isArray(chatgptWebContextProfiles)
+    || Object.entries(chatgptWebContextProfiles).some(([slug, profile]) =>
+      !isConfigurableChatGptWebContextProfileSlug(slug) || (profile !== "512k" && profile !== "1m"))) {
+    throw new Error("ChatGPT Web context profiles are invalid");
+  }
   const configuredCapabilities: ChatGptWebCapabilities = {
     localToolsEnabled: provider.chatgptWeb?.localToolsEnabled === true,
     solAvailable: provider.chatgptWeb?.solAvailable !== false,
     extraHighAvailable: provider.chatgptWeb?.extraHighAvailable === true,
     proAvailable: provider.chatgptWeb?.proAvailable === true,
+    chatgptWebContextProfiles,
   };
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
   const freshConversationPerTurn = provider.chatgptWeb?.experimentalFreshConversationPerTurn === true;
@@ -402,6 +412,14 @@ export function createChatGptWebAdapter(
     parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID && !parsed._compactionRequest
       ? lunaCheckpointStore.apply(parsed).parsed
       : parsed
+  );
+  const explicitContextProfileFor = (input: CodexParsedRequest): "512k" | "1m" | undefined => (
+    input._chatgptWebRouteSlug ? chatgptWebContextProfiles[input._chatgptWebRouteSlug] : undefined
+  );
+  const multipartEnabledFor = (input: CodexParsedRequest): boolean => (
+    input.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
+    && !isChatGptWebZeroRiskBackendModel(input.modelId)
+    && explicitContextProfileFor(input) !== undefined
   );
 
   const startRuntime = (
@@ -447,7 +465,7 @@ export function createChatGptWebAdapter(
       : undefined;
     const compileOptionsFor = (input: CodexParsedRequest) => {
       if (manualRequest) return {};
-      const experimentalMultipartParts = experimentalBiggerContext
+      const experimentalMultipartParts = multipartEnabledFor(input)
         ? resolveBiggerContextMultipartParts(input, turnCapabilities, experimentalSkillAttachments)
         : undefined;
       return {
@@ -691,6 +709,7 @@ export function createChatGptWebAdapter(
       const browserTurn = cancellableBrowserTurn(finalizeCheckpoint(worker.run({
         traceId,
         modelId: parsed.modelId,
+        ...(parsed._chatgptWebRouteSlug ? { contextRouteSlug: parsed._chatgptWebRouteSlug } : {}),
         reasoning: parsed.options.reasoning,
         ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
         capabilities: turnCapabilities,
@@ -762,6 +781,7 @@ export function createChatGptWebAdapter(
     const browserTurn = cancellableBrowserTurn(trackBrowserOwner(finalizeCheckpoint(worker.run({
       traceId,
       modelId: parsed.modelId,
+      ...(parsed._chatgptWebRouteSlug ? { contextRouteSlug: parsed._chatgptWebRouteSlug } : {}),
       reasoning: parsed.options.reasoning,
       ...(parsed._chatgptModelFamily ? { modelFamily: parsed._chatgptModelFamily } : {}),
       capabilities: turnCapabilities,

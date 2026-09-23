@@ -3356,6 +3356,38 @@ test("Bigger Context preflight expands only the total context ceiling and keeps 
   )).toThrow("unavailable for Luna");
 });
 
+test("an explicit 512K route profile owns the multipart aggregate ceiling", () => {
+  const profiled = {
+    localToolsEnabled: false,
+    solAvailable: true,
+    extraHighAvailable: false,
+    proAvailable: false,
+    chatgptWebContextProfiles: { "chatgpt-web/gpt-5.6-sol": "512k" as const },
+  };
+  expect(() => assertChatGptWebMultipartInputWithinLimits(
+    511_999,
+    70_000,
+    "gpt-5.6-sol",
+    "high",
+    profiled,
+    400_000,
+    6,
+    undefined,
+    "chatgpt-web/gpt-5.6-sol",
+  )).not.toThrow();
+  expect(() => assertChatGptWebMultipartInputWithinLimits(
+    512_000,
+    70_000,
+    "gpt-5.6-sol",
+    "high",
+    profiled,
+    400_000,
+    6,
+    undefined,
+    "chatgpt-web/gpt-5.6-sol",
+  )).toThrow("512,000-token");
+});
+
 test("Bigger Context stages use the lowest account mode that can carry the stage", () => {
   const plus = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false };
   const pro = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };

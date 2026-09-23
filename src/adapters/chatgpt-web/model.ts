@@ -1,6 +1,7 @@
 import {
   CHATGPT_WEB_BACKEND_MODEL,
   CHATGPT_WEB_LUNA_BACKEND_MODEL,
+  type ChatGptWebContextProfiles,
 } from "../../chatgpt-web-models";
 
 export const CHATGPT_WEB_MODEL_ID = CHATGPT_WEB_BACKEND_MODEL;
@@ -11,6 +12,7 @@ export interface ChatGptWebCapabilities {
   solAvailable: boolean;
   extraHighAvailable: boolean;
   proAvailable: boolean;
+  chatgptWebContextProfiles?: ChatGptWebContextProfiles;
 }
 
 export interface ChatGptWebModelMode {

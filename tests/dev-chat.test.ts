@@ -220,7 +220,7 @@ test("an existing DEV chat changes route only when the user explicitly requests 
   });
 });
 
-test("Bigger Context triples the DEV compaction window and fails closed for Luna", async () => {
+test("DEV context profiles enlarge only the selected Web route and leave Luna at Default", async () => {
   const root = scratch("cgw-dev-bigger-context");
   const config = {
     ...defaultConfig("browser-only"),
@@ -243,22 +243,25 @@ test("Bigger Context triples the DEV compaction window and fails closed for Luna
   const normalState = normal.open("normal-window", "chatgpt-web/high").state;
   expect(normal.status(normalState).autoCompactTokenLimit).toBe(95_000);
 
-  const biggerConfig = { ...config, experimentalBiggerContext: true };
-  const bigger = new DevChatDriver(biggerConfig, store, factory, root, { biggerContext: true });
-  const biggerState = bigger.open("bigger-window", "chatgpt-web/high").state;
+  const biggerConfig = {
+    ...config,
+    chatgptWebContextProfiles: { "chatgpt-web/gpt-5.6-sol": "512k" as const },
+  };
+  const bigger = new DevChatDriver(biggerConfig, store, factory, root);
+  const biggerState = bigger.open("bigger-window", "chatgpt-web/gpt-5.6-sol").state;
   const biggerStatus = bigger.status(biggerState);
   expect(biggerStatus).toMatchObject({
-    autoCompactTokenLimit: 285_000,
-    contextWindow: 333_579,
+    autoCompactTokenLimit: 437_438,
+    contextWindow: 512_000,
   });
-  expect(biggerStatus.percent).toBe(Math.round((biggerStatus.inputTokens / 285_000) * 1_000) / 10);
+  expect(biggerStatus.percent).toBe(Math.round((biggerStatus.inputTokens / 437_438) * 1_000) / 10);
   const luna = new DevChatDriver({
     ...biggerConfig,
     solAvailable: false,
     extraHighAvailable: false, proAvailable: false,
-  }, store, factory, root, { biggerContext: true });
-  expect(() => luna.open("luna-window", "chatgpt-web/luna")).toThrow("unavailable for Luna");
-  expect(() => luna.open("think-window", "chatgpt-web/think")).toThrow("unavailable for Luna");
+  }, store, factory, root);
+  const lunaState = luna.open("luna-window", "chatgpt-web/luna").state;
+  expect(luna.status(lunaState).contextWindow).toBe(1_050_000);
   await Promise.all([normal.close(), bigger.close(), luna.close()]);
 });
 

@@ -4,6 +4,8 @@ import type { LimitsSnapshot } from "./limits-types";
 export type Language = keyof typeof languages;
 export type LauncherProfile = "production" | "development";
 export type BrowserInteractionMode = "automatic" | "manual";
+export type ChatGptWebContextProfile = "512k" | "1m";
+export type ChatGptWebContextProfileSelection = "default" | ChatGptWebContextProfile;
 export type Surface = "browser" | "setup" | "mcp" | "activity" | "limits" | "settings";
 
 export interface LauncherState {
@@ -17,6 +19,7 @@ export interface LauncherState {
   showBrowserDuringTurns: boolean;
   browserInteractionMode: BrowserInteractionMode;
   experimentalBiggerContext: boolean;
+  chatgptWebContextProfiles: Record<string, ChatGptWebContextProfile>;
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
   useSavedChats: boolean;
@@ -108,6 +111,7 @@ export interface LauncherSnapshot {
   browser: BrowserState | null;
   connectorName: string;
   connectorNames: Record<BrowserInteractionMode, string>;
+  contextProfileModels: ReadonlyArray<{ slug: string; label: string }>;
   mcpCredentialsConfigured: boolean;
   logs: LogRecord[];
   urls: {
@@ -163,6 +167,7 @@ export interface LauncherApi {
   setMcpStep(step: number): Promise<LauncherState>;
   setAutostart(enabled: boolean): Promise<{ state: LauncherState; supported: boolean; enabled: boolean }>;
   setBiggerContext(enabled: boolean): Promise<LauncherState>;
+  setChatGptWebContextProfile(slug: string, profile: ChatGptWebContextProfileSelection): Promise<LauncherState>;
   setSkillAttachments(enabled: boolean): Promise<LauncherState>;
   setFreshConversationPerTurn(enabled: boolean): Promise<LauncherState>;
   setUseSavedChats(enabled: boolean): Promise<LauncherState>;

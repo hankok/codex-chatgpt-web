@@ -1915,6 +1915,37 @@ code {
   padding: 12px 0;
 }
 
+.context-profile-picker {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(58px, auto));
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-control);
+}
+
+.context-profile-picker > button {
+  min-width: 58px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.context-profile-picker > button:hover:not(:disabled),
+.context-profile-picker > button.is-selected {
+  background: var(--color-background-control-hover);
+  color: var(--color-text-primary);
+}
+
+.context-profile-picker > button:disabled {
+  opacity: 0.55;
+}
+
 .language-menu {
   position: relative;
   z-index: 1;

@@ -215,14 +215,37 @@ describe("fixed ChatGPT Web model routes", () => {
     });
   });
 
-  test("triples Sol context and compaction limits only when Bigger Context is enabled", () => {
+  test("explicit per-route context profiles override only the selected Web route", () => {
+    const profiled = {
+      ...plus,
+      chatgptWebContextProfiles: {
+        "chatgpt-web/gpt-5.6-sol": "512k" as const,
+        "chatgpt-web/gpt-5.6-pro": "1m" as const,
+      },
+    };
+    const normal = resolveChatGptWebContextLimits(
+      CHATGPT_WEB_BACKEND_MODEL, "high", profiled, "chatgpt-web/gpt-5.6-sol-instant",
+    );
+    const selected512 = resolveChatGptWebContextLimits(
+      CHATGPT_WEB_BACKEND_MODEL, "high", profiled, "chatgpt-web/gpt-5.6-sol",
+    );
+    const selected1m = resolveChatGptWebContextLimits(
+      CHATGPT_WEB_BACKEND_MODEL, "max", { ...profiled, proAvailable: true }, "chatgpt-web/gpt-5.6-pro",
+    );
+    expect(normal.contextWindow).toBe(90_000);
+    expect(selected512.contextWindow).toBe(512_000);
+    expect(selected512.autoCompactTokenLimit).toBe(Math.round(80_000 * 512_000 / 90_000));
+    expect(selected1m.contextWindow).toBe(1_000_000);
+  });
+
+  test("legacy Bigger Context no longer changes route limits without an explicit profile", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "max", {
       ...pro,
       experimentalBiggerContext: true,
     })).toEqual({
-      contextWindow: 336_579,
+      contextWindow: 112_193,
       effectiveContextWindowPercent: 85,
-      autoCompactTokenLimit: 285_000,
+      autoCompactTokenLimit: 95_000,
     });
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_LUNA_BACKEND_MODEL, "low", {
       solAvailable: false,
@@ -241,6 +264,7 @@ describe("fixed ChatGPT Web model routes", () => {
     const route = routeChatGptWebRequest(request, defaultConfig("browser-only"));
 
     expect(route.slug).toBe("chatgpt-web/high");
+    expect((request as any)._chatgptWebRouteSlug).toBe("chatgpt-web/high");
     expect(request.modelId).toBe(CHATGPT_WEB_BACKEND_MODEL);
     expect(request.options.reasoning).toBe("high");
     expect(request._rawBody).toEqual(rawSnapshot);

@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld("codexWebLauncher", {
   setMcpStep: (step) => ipcRenderer.invoke("launcher:set-mcp-step", step),
   setAutostart: (enabled) => ipcRenderer.invoke("launcher:autostart", enabled),
   setBiggerContext: (enabled) => ipcRenderer.invoke("launcher:bigger-context", enabled),
+  setChatGptWebContextProfile: (slug, profile) => ipcRenderer.invoke("launcher:context-profile", slug, profile),
   setSkillAttachments: (enabled) => ipcRenderer.invoke("launcher:skill-attachments", enabled),
   setFreshConversationPerTurn: (enabled) => ipcRenderer.invoke("launcher:fresh-conversation-per-turn", enabled),
   setUseSavedChats: (enabled) => ipcRenderer.invoke("launcher:use-saved-chats", enabled),

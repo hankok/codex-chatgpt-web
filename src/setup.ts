@@ -2,7 +2,13 @@ import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import type { AppConfig, BrowserInteractionMode, RuntimeMode, SubagentProtocol } from "./config";
+import type {
+  AppConfig,
+  BrowserInteractionMode,
+  ChatGptWebContextProfile,
+  RuntimeMode,
+  SubagentProtocol,
+} from "./config";
 import {
   currentRuntimeCommand,
   defaultBrokerEndpoint,
@@ -13,6 +19,7 @@ import {
   saveConfig,
   tunnelConfigForInteractionMode,
 } from "./config";
+import { isConfigurableChatGptWebContextProfileSlug } from "./chatgpt-web-models";
 import {
   browserLoginStateExists,
   inspectBrowserLoginCapabilities,
@@ -53,6 +60,7 @@ export interface SetupOptions {
   forceLogin?: boolean;
   autoApproveToolCalls?: boolean;
   experimentalBiggerContext?: boolean;
+  chatgptWebContextProfiles?: Record<string, ChatGptWebContextProfile | "default">;
   experimentalSkillAttachments?: boolean;
   experimentalFreshConversationPerTurn?: boolean;
   useSavedChats?: boolean;
@@ -63,6 +71,20 @@ export interface SetupOptions {
   tunnelId?: string;
   runtimeKeyFile?: string;
   runtimeKeyValue?: string;
+}
+
+export function applyChatGptWebContextProfileUpdates(
+  config: AppConfig,
+  updates: Record<string, ChatGptWebContextProfile | "default">,
+): void {
+  for (const [slug, profile] of Object.entries(updates)) {
+    if (!isConfigurableChatGptWebContextProfileSlug(slug)) {
+      throw new Error(`Unknown ChatGPT Web context profile route: ${slug}`);
+    }
+    if (profile === "default") delete config.chatgptWebContextProfiles[slug];
+    else if (profile === "512k" || profile === "1m") config.chatgptWebContextProfiles[slug] = profile;
+    else throw new Error(`Invalid ChatGPT Web context profile for ${slug}: ${profile}`);
+  }
 }
 
 export interface SetupResult {
@@ -147,6 +169,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     extraHighAvailable: before.extraHighAvailable,
     proAvailable: before.proAvailable,
     experimentalBiggerContext: before.experimentalBiggerContext,
+    chatgptWebContextProfiles: before.chatgptWebContextProfiles,
     experimentalSkillAttachments: before.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: before.experimentalFreshConversationPerTurn,
     useSavedChats: before.useSavedChats,
@@ -178,6 +201,7 @@ function meaningfulRuntimeChange(before: AppConfig, after: AppConfig): boolean {
     extraHighAvailable: after.extraHighAvailable,
     proAvailable: after.proAvailable,
     experimentalBiggerContext: after.experimentalBiggerContext,
+    chatgptWebContextProfiles: after.chatgptWebContextProfiles,
     experimentalSkillAttachments: after.experimentalSkillAttachments,
     experimentalFreshConversationPerTurn: after.experimentalFreshConversationPerTurn,
     useSavedChats: after.useSavedChats,
@@ -285,6 +309,9 @@ function baseConfig(
   }
   if (options.experimentalBiggerContext !== undefined) {
     config.experimentalBiggerContext = options.experimentalBiggerContext;
+  }
+  if (options.chatgptWebContextProfiles) {
+    applyChatGptWebContextProfileUpdates(config, options.chatgptWebContextProfiles);
   }
   if (options.zeroRiskProEnabled !== undefined) {
     if (config.browserInteractionMode !== "manual") {

@@ -11,6 +11,7 @@ const {
   terminateOwnedProcessTree,
 } = require("./process-tree.cjs");
 const { runtimeInvocation } = require("./runtime-command.cjs");
+const { isChatGptWebContextProfileModel } = require("./context-profiles.cjs");
 
 const RESTART_WINDOW_MS = 60_000;
 const MAX_RESTARTS_PER_WINDOW = 5;
@@ -260,6 +261,18 @@ function validateConfig(config, descriptorPath, platform = process.platform, lau
   if (config.experimentalBiggerContext !== undefined
     && typeof config.experimentalBiggerContext !== "boolean") {
     throw new Error("Runtime configuration has an invalid experimentalBiggerContext");
+  }
+  if (config.chatgptWebContextProfiles !== undefined) {
+    if (!config.chatgptWebContextProfiles
+      || typeof config.chatgptWebContextProfiles !== "object"
+      || Array.isArray(config.chatgptWebContextProfiles)) {
+      throw new Error("Runtime configuration has invalid chatgptWebContextProfiles");
+    }
+    for (const [slug, profile] of Object.entries(config.chatgptWebContextProfiles)) {
+      if (!isChatGptWebContextProfileModel(slug) || (profile !== "512k" && profile !== "1m")) {
+        throw new Error("Runtime configuration has invalid chatgptWebContextProfiles");
+      }
+    }
   }
   if (config.experimentalFreshConversationPerTurn !== undefined
     && typeof config.experimentalFreshConversationPerTurn !== "boolean") {

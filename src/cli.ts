@@ -102,6 +102,15 @@ function takeOption(args: string[], name: string): string | undefined {
   return value;
 }
 
+function takeOptions(args: string[], name: string): string[] {
+  const values: string[] = [];
+  for (;;) {
+    const value = takeOption(args, name);
+    if (value === undefined) return values;
+    values.push(value);
+  }
+}
+
 function takeFlag(args: string[], name: string): boolean {
   const index = args.indexOf(name);
   if (index < 0) return false;
@@ -322,6 +331,23 @@ async function setupCommand(args: string[]): Promise<void> {
     throw new Error("Choose at most one context mode: --bigger-context or --standard-context");
   }
   if (biggerContext || standardContext) options.experimentalBiggerContext = biggerContext;
+  const contextProfileArgs = takeOptions(args, "--chatgpt-web-context-profile");
+  if (contextProfileArgs.length > 0) {
+    const updates: NonNullable<SetupOptions["chatgptWebContextProfiles"]> = {};
+    for (const raw of contextProfileArgs) {
+      const separator = raw.lastIndexOf("=");
+      const slug = separator > 0 ? raw.slice(0, separator) : "";
+      const profile = separator > 0 ? raw.slice(separator + 1) : "";
+      if (!slug.startsWith("chatgpt-web/")
+        || (profile !== "default" && profile !== "512k" && profile !== "1m")) {
+        throw new Error(
+          "--chatgpt-web-context-profile must be <chatgpt-web/route>=<default|512k|1m>",
+        );
+      }
+      updates[slug] = profile;
+    }
+    options.chatgptWebContextProfiles = updates;
+  }
   if (skillAttachments || inlineSkills) options.experimentalSkillAttachments = skillAttachments;
   const zeroRiskPro = takeFlag(args, "--zero-risk-pro");
   const zeroRiskDefault = takeFlag(args, "--zero-risk-default");

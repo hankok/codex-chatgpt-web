@@ -16,6 +16,7 @@ const {
 const { embeddedRuntimeInvocation, runtimeInvocation } = require("./runtime-command.cjs");
 const { redactText } = require("./logging.cjs");
 const { DETACH_OWNED_CHILD, terminateOwnedProcessTree } = require("./process-tree.cjs");
+const { validateChatGptWebContextProfileSelection } = require("./context-profiles.cjs");
 
 const MAX_CAPTURE_BYTES = 8 * 1024 * 1024;
 const MAX_RUNTIME_LOG_LINE_CHARS = 64 * 1024;
@@ -1096,6 +1097,41 @@ class RuntimeHost {
     return { ...result, mode, enabled: enabled === true };
   }
 
+  async setChatGptWebContextProfile(slug, profile) {
+    const selection = validateChatGptWebContextProfileSelection(slug, profile);
+    const current = this.runtimeConfigSnapshot();
+    if (!current.configured) {
+      throw new Error("Initialize the runtime before changing ChatGPT Web context profiles");
+    }
+    if ((current.config?.browserInteractionMode ?? "automatic") !== "automatic") {
+      throw new Error("ChatGPT Web context profiles are unavailable in Zero Risk mode");
+    }
+    const development = this.launcherProfile === "development";
+    const args = [
+      ...(development ? ["dev", "setup"] : ["setup"]),
+      current.mode === "full" ? "--full" : "--browser-only",
+      "--browser-host-descriptor", this.browserDescriptorPath,
+      ...this.browserInteractionArgs(),
+      "--acknowledge-unofficial",
+      ...(development ? [] : ["--replace-codex-route", "--restart-service"]),
+      "--standard-context",
+      "--chatgpt-web-context-profile", `${selection.slug}=${selection.profile}`,
+    ];
+    if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
+    const options = {
+      message: `Updating ${selection.slug} context profile`,
+      successMessage: `Updated ${selection.slug} context profile${development ? "" : "; restart Codex"}`,
+      timeoutMs: CORE_SETUP_TIMEOUT_MS,
+    };
+    const result = development
+      ? await this.runDevSetup("context-profile", args, options)
+      : await this.runSetup("context-profile", args, options);
+    const profiles = { ...(current.config?.chatgptWebContextProfiles ?? {}) };
+    if (selection.profile === "default") delete profiles[selection.slug];
+    else profiles[selection.slug] = selection.profile;
+    return { ...result, profiles, profile: selection.profile };
+  }
+
   async setSkillAttachments(enabled) {
     const current = this.runtimeConfigSnapshot();
     if (!current.configured) throw new Error("Initialize the runtime before changing Skills as files");
@@ -1386,9 +1422,7 @@ class RuntimeHost {
       ...this.browserInteractionArgs({ mode, refreshCapabilities: true }),
       "--acknowledge-unofficial",
       ...(this.launcherProfile === "production" ? ["--replace-codex-route", "--restart-service"] : []),
-      mode === "automatic" && current.config?.experimentalBiggerContext === true
-        ? "--bigger-context"
-        : "--standard-context",
+      "--standard-context",
     ];
     if (current.config?.autoApproveToolCalls === true) args.push("--auto-approve-tool-calls");
     const options = {

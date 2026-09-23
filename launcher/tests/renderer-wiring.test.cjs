@@ -195,9 +195,10 @@ test("DEV launcher exposes its profile and supervises only its Full-mode MCP run
   assert.match(electronMain, /onboardingComplete:\s*true,[\s\S]*?autoStart:\s*false/);
   assert.match(appSource, /snapshot\.profile === "development"/);
   assert.match(appSource, /data-profile=\{snapshot\.profile\}/);
-  assert.match(appSource, /manualBiggerContextUnavailable[\s\S]*?copy\.biggerContextBody/);
-  assert.match(appSource, /api!\.setBiggerContext\(enabled\)/);
-  assert.match(electronMain, /runtimeHost\.setBiggerContext\(enabled === true\)/);
+  assert.match(appSource, /snapshot\.contextProfileModels \?\? \[\][\s\S]*?ContextProfilePicker/);
+  assert.match(appSource, /api!\.setChatGptWebContextProfile\(slug, profile\)/);
+  assert.match(electronMain, /runtimeHost\.setChatGptWebContextProfile\(slug, profile\)/);
+  assert.match(preloadSource, /setChatGptWebContextProfile:[\s\S]*?launcher:context-profile/);
   assert.doesNotMatch(electronMain, /IS_DEV_PROFILE && key === "experimentalBiggerContext"/);
 });
 
@@ -215,20 +216,14 @@ test("macOS passkey sign-in is additive to the unchanged embedded login action",
   assert.match(browserHostSource, /await this\.waitForAuthenticated\(60_000\)[\s\S]*?runSessionInspection\(false\)/);
 });
 
-test("Bigger Context startup recommendation reuses the persisted setting and setup transaction", () => {
+test("per-model context profiles replace the startup Bigger Context recommendation", () => {
   assert.match(
     appSource,
-    /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\([\s\S]*?snapshot\.state\.browserInteractionMode === "automatic"[\s\S]*?snapshot\.state\.coreSetupComplete === true[\s\S]*?!snapshot\.state\.experimentalBiggerContext,/,
+    /const \[biggerContextRecommendationOpen, setBiggerContextRecommendationOpen\] = useState\(false\)/,
   );
-  assert.match(appSource, /&& !biggerContextRecommendationOpen;/);
-  assert.match(appSource, /updateState\(await api!\.setBiggerContext\(enabled\)\)/);
-  assert.match(
-    appSource,
-    /<BiggerContextRecommendation[\s\S]*?checked=\{snapshot\.state\.experimentalBiggerContext\}[\s\S]*?onClose=\{\(\) => setBiggerContextRecommendationOpen\(false\)\}/,
-  );
-  assert.match(appSource, /<Switch checked=\{checked\} disabled=\{busy\} onChange=\{onChange\} \/>/);
-  assert.match(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*position:\s*fixed;/s);
-  assert.doesNotMatch(stylesSource, /\.bigger-context-recommendation-backdrop\s*\{[^}]*backdrop-filter:/s);
+  assert.match(appSource, /value=\{snapshot\.state\.chatgptWebContextProfiles\?\.\[model\.slug\] \?\? "default"\}/);
+  assert.match(appSource, /const options:[\s\S]*?"default"[\s\S]*?"512k"[\s\S]*?"1m"/);
+  assert.match(stylesSource, /\.context-profile-picker\s*\{/);
 });
 
 test("Zero Risk setup commits state after the runtime transaction and preserves manual inspection boundaries", () => {
@@ -466,6 +461,7 @@ test("fresh-conversation snapshot uses runtime configuration and mode switching 
     browserHost: { activeTraceId: null, turnTabs: new Map(), currentOperation: () => null, snapshot: () => ({}),
       withInteractionModeChange: async (_mode, action) => action() },
     validateBrowserInteractionMode: mode => mode, IS_DEV_PROFILE: false, send() {}, startCatalogVerificationMonitor() {},
+    CHATGPT_WEB_CONTEXT_PROFILE_MODELS: [],
     LAUNCHER_PROFILE: { kind: "production", codexHome: "/fixture/codex" }, CORE_HOME: "/fixture/core",
     launcherUserData: "/fixture/launcher", logger: { recent: () => [] },
     GITHUB_URL: "", X_URL: "", CONNECTORS_URL: "", TUNNELS_URL: "", KEYS_URL: "",

@@ -19,6 +19,8 @@ export type ChatGptWebZeroRiskBackendModel =
 export type ChatGptWebCodexEffort = "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
 export type ChatGptWebAdapterEffort = "low" | "medium" | "high" | "xhigh" | "max";
 export type ChatGptWebModelFamily = "5.6" | "6";
+export type ChatGptWebContextProfile = "512k" | "1m";
+export type ChatGptWebContextProfiles = Partial<Record<string, ChatGptWebContextProfile>>;
 
 /**
  * Measured Plus browser transport windows, including the fixed hidden ChatGPT platform reserve.
@@ -114,31 +116,32 @@ export function resolveChatGptWebContextLimits(
   backendModel: ChatGptWebBackendModel,
   effort: ChatGptWebAdapterEffort,
   capabilities: ChatGptWebAccountCapabilities,
+  modelSlug?: string,
 ): ChatGptWebContextLimits {
+  let limits: ChatGptWebContextLimits;
   if (isChatGptWebZeroRiskBackendModel(backendModel)) {
     if (capabilities.experimentalBiggerContext) {
       throw new Error("Zero Risk does not support Bigger Context");
     }
     if (backendModel === CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL) {
-      return contextLimits(
+      limits = contextLimits(
         CHATGPT_WEB_ZERO_RISK_PRO_CONTEXT_WINDOW,
         CHATGPT_WEB_ZERO_RISK_PRO_AUTO_COMPACT_TOKEN_LIMIT,
       );
+      return limits;
     }
-    return contextLimits(
+    limits = contextLimits(
       CHATGPT_WEB_ZERO_RISK_CONTEXT_WINDOW,
       CHATGPT_WEB_ZERO_RISK_AUTO_COMPACT_TOKEN_LIMIT,
     );
+    return limits;
   }
   if (backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) {
     // Luna carries continuity through a private checkpoint on every completed browser turn. Codex
     // internally clamps this field to 90% of the model window, but the reported active usage is the
     // bounded payload actually sent to ChatGPT and therefore stays far below that threshold.
-    return contextLimits(CHATGPT_WEB_LUNA_CONTEXT_WINDOW, CHATGPT_WEB_LUNA_CONTEXT_WINDOW);
-  }
-
-  let limits: ChatGptWebContextLimits;
-  if (capabilities.proAvailable) {
+    limits = contextLimits(CHATGPT_WEB_LUNA_CONTEXT_WINDOW, CHATGPT_WEB_LUNA_CONTEXT_WINDOW);
+  } else if (capabilities.proAvailable) {
     const contextWindow = effort === "low"
       ? CHATGPT_WEB_PRO_STANDARD_CONTEXT_WINDOW
       : effort === "max"
@@ -158,10 +161,12 @@ export function resolveChatGptWebContextLimits(
   } else {
     throw new Error(`ChatGPT Plus context limit is not defined for unavailable effort: ${effort}`);
   }
-  if (!capabilities.experimentalBiggerContext) return limits;
+  const profile = modelSlug ? capabilities.chatgptWebContextProfiles?.[modelSlug] : undefined;
+  if (!profile) return limits;
+  const contextWindow = profile === "512k" ? 512_000 : 1_000_000;
   return contextLimits(
-    limits.contextWindow * CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
-    limits.autoCompactTokenLimit * CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
+    contextWindow,
+    Math.round(limits.autoCompactTokenLimit * contextWindow / limits.contextWindow),
   );
 }
 
@@ -257,6 +262,7 @@ export interface ChatGptWebAccountCapabilities {
   extraHighAvailable?: boolean;
   proAvailable: boolean;
   experimentalBiggerContext?: boolean;
+  chatgptWebContextProfiles?: ChatGptWebContextProfiles;
   browserInteractionMode?: "automatic" | "manual";
   zeroRiskProEnabled?: boolean;
 }
@@ -453,8 +459,20 @@ const routesBySlug = new Map(
     .map(route => [route.slug, route]),
 );
 
+const configurableContextProfileSlugs = new Set(
+  CHATGPT_WEB_MODEL_ROUTES.map(route => route.slug),
+);
+
 export function isChatGptWebModelSlug(modelId: string): boolean {
   return modelId.startsWith(CHATGPT_WEB_MODEL_PREFIX);
+}
+
+export function isKnownChatGptWebModelSlug(modelId: string): boolean {
+  return routesBySlug.has(modelId);
+}
+
+export function isConfigurableChatGptWebContextProfileSlug(modelId: string): boolean {
+  return configurableContextProfileSlugs.has(modelId);
 }
 
 export function availableChatGptWebModelRoutes(

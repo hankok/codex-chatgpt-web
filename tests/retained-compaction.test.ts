@@ -1206,13 +1206,13 @@ test("a compact HTTP observer can reconnect without sending a second retained-ch
   }
 });
 
-test.each([false, true])("structured compact rebuilds canonical context when its retained source is absent (Bigger Context=%s)", async experimentalBiggerContext => {
+test.each([false, true])("structured compact rebuilds canonical context when its retained source is absent (explicit enlarged context=%s)", async enlargedContext => {
   const root = mkdtempSync(join(shortSocketTempRoot(), "cgw-missing-retained-compact-"));
   const provider: CodexProviderConfig = {
     adapter: "chatgpt-web",
     baseUrl: `browser://missing-retained-${Date.now()}`,
     chatgptWeb: {
-      experimentalBiggerContext,
+      chatgptWebContextProfiles: enlargedContext ? { "chatgpt-web/gpt-5.6-sol": "512k" } : {},
       browserHost: "launcher",
       browserHostDescriptorPath: join(root, "launcher.json"),
       brokerSocketPath: defaultBrokerEndpoint(root),
@@ -1233,7 +1233,7 @@ test.each([false, true])("structured compact rebuilds canonical context when its
     const contextText = prepared.multipart?.parts.join("\n") ?? prepared.text;
     expect(contextText).toContain("Original task");
     expect(contextText).toContain("Continue with the next step");
-    if (experimentalBiggerContext) {
+    if (enlargedContext) {
       expect(prepared.multipart!.parts).toHaveLength(6);
       expect(prepared.trimmedCompactionMessages).toBeUndefined();
       const lastRecord = prepared.multipart!.parts.flatMap(part => JSON.parse(part).records).at(-1);
@@ -1243,8 +1243,9 @@ test.each([false, true])("structured compact rebuilds canonical context when its
     return "Fallback checkpoint from canonical Codex context";
   };
   const compact = request(true);
+  if (enlargedContext) (compact as any)._chatgptWebRouteSlug = "chatgpt-web/gpt-5.6-sol";
   const events: AdapterEvent[] = [];
-  if (experimentalBiggerContext) compact.context.messages.at(-1)!.content += "x".repeat(160_000);
+  if (enlargedContext) compact.context.messages.at(-1)!.content += "x".repeat(160_000);
   try {
     await createChatGptWebAdapter(provider).runTurn!(
       compact,

@@ -928,6 +928,7 @@ export function assertChatGptWebInputWithinLimits(
   effort: ChatGptWebModelMode["effort"],
   capabilities: ChatGptWebCapabilities,
   promptChars?: number,
+  contextRouteSlug?: string,
 ): void {
   if (modelId !== CHATGPT_WEB_MODEL_ID && modelId !== CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error(`ChatGPT web context limit is not defined for model: ${modelId}`);
@@ -941,7 +942,7 @@ export function assertChatGptWebInputWithinLimits(
       { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
     );
   }
-  const { contextWindow } = resolveChatGptWebContextLimits(modelId, effort, capabilities);
+  const { contextWindow } = resolveChatGptWebContextLimits(modelId, effort, capabilities, contextRouteSlug);
   const { browserMessageTokenLimit, browserComposerCharLimit } = resolveChatGptWebTransportLimits(
     modelId,
     effort,
@@ -986,6 +987,7 @@ export function assertChatGptWebMultipartInputWithinLimits(
     finalMessageChars: number;
     finalImageTokens?: number;
   },
+  contextRouteSlug?: string,
 ): void {
   if (!isChatGptWebMultipartPartCount(partCount)) {
     throw new Error("Bigger Context requires two or six context parts");
@@ -1054,7 +1056,17 @@ export function assertChatGptWebMultipartInputWithinLimits(
     assertMessageBoundary("stage", estimatedMessageTokens, maxMessageChars, effort);
   }
   // More transport messages do not enlarge the model's advertised context window.
-  const experimentalContextWindow = baseContextWindow * Math.min(partCount, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
+  const explicitProfile = contextRouteSlug
+    ? capabilities.chatgptWebContextProfiles?.[contextRouteSlug]
+    : undefined;
+  const experimentalContextWindow = explicitProfile
+    ? resolveChatGptWebContextLimits(
+      modelId,
+      effort,
+      { ...capabilities, experimentalBiggerContext: false },
+      contextRouteSlug,
+    ).contextWindow
+    : baseContextWindow * Math.min(partCount, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
   if (estimatedInputTokens < experimentalContextWindow) return;
   const partLabel = partCount === 2 ? "two-part" : "six-part";
   throw new ChatGptWebAdapterError(
@@ -1242,6 +1254,7 @@ function withBrowserTurnAbort<T>(promise: Promise<T>, signal?: AbortSignal): Pro
 export interface BrowserTurn {
   traceId: string;
   modelId: string;
+  contextRouteSlug?: string;
   reasoning?: string;
   modelFamily?: "5.6" | "6";
   capabilities: ChatGptWebCapabilities;
@@ -4645,6 +4658,7 @@ export class ChatGptBrowserWorker {
             finalMessageChars: multipartFinalPrompt.length,
             finalImageTokens: estimateChatGptWebImageTokens(prepared),
           } : undefined,
+          turn.contextRouteSlug,
         );
       } else {
         assertChatGptWebInputWithinLimits(
@@ -4654,6 +4668,7 @@ export class ChatGptBrowserWorker {
           requestedMode.effort,
           browserCapabilities,
           maxMessageChars,
+          turn.contextRouteSlug,
         );
       }
       const deadline = this.config.turnTimeoutMs === undefined

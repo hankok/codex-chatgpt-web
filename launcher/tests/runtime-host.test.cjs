@@ -133,7 +133,41 @@ test("browser interaction mode changes reuse the transactional setup and refresh
   assert.equal(automaticResult.mode, "automatic");
   assert.equal(automatic.invocation().args.includes("--automatic-browser-interaction"), true);
   assert.equal(automatic.invocation().args.includes("--refresh-account-capabilities"), true);
-  assert.equal(automatic.invocation().args.includes("--bigger-context"), true);
+  assert.equal(automatic.invocation().args.includes("--bigger-context"), false);
+  assert.equal(automatic.invocation().args.includes("--standard-context"), true);
+});
+
+test("per-model context profile uses the setup transaction and clears the legacy global flag", async () => {
+  const fixture = hostFor({
+    mode: "full",
+    appName: "Codex Native2",
+    browserInteractionMode: "automatic",
+    experimentalBiggerContext: true,
+    chatgptWebContextProfiles: { "chatgpt-web/gpt-5.6-pro": "1m" },
+  });
+  const result = await fixture.host.setChatGptWebContextProfile("chatgpt-web/gpt-5.6-sol", "512k");
+  assert.equal(result.profile, "512k");
+  assert.deepEqual(result.profiles, {
+    "chatgpt-web/gpt-5.6-pro": "1m",
+    "chatgpt-web/gpt-5.6-sol": "512k",
+  });
+  assert.equal(fixture.invocation().args.includes("--standard-context"), true);
+  assert.deepEqual(
+    fixture.invocation().args.slice(-2),
+    ["--chatgpt-web-context-profile", "chatgpt-web/gpt-5.6-sol=512k"],
+  );
+});
+
+test("per-model context profile rejects Luna and Zero Risk routes", async () => {
+  const fixture = hostFor({ mode: "full", appName: "Codex Native2", browserInteractionMode: "automatic" });
+  await assert.rejects(
+    fixture.host.setChatGptWebContextProfile("chatgpt-web/gpt-5.6-luna", "512k"),
+    /Unknown ChatGPT Web context-profile model/,
+  );
+  await assert.rejects(
+    fixture.host.setChatGptWebContextProfile("chatgpt-web/zero-risk", "1m"),
+    /Unknown ChatGPT Web context-profile model/,
+  );
 });
 
 test("switching back from Zero Risk preserves the saved automatic connector identity", async () => {

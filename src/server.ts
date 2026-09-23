@@ -364,6 +364,7 @@ export interface ResponseRequestOptions {
 
 export function routeChatGptWebRequest(parsed: CodexParsedRequest, config: AppConfig): ChatGptWebModelRoute {
   const route = requireChatGptWebModelRoute(parsed.modelId, config, parsed.options.reasoning);
+  parsed._chatgptWebRouteSlug = route.slug;
   if (route.interactionMode === "automatic" && route.modelFamily) parsed._chatgptModelFamily = route.modelFamily;
   else delete parsed._chatgptModelFamily;
   parsed.modelId = route.backendModel;

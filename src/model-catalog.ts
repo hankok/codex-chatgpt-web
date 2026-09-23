@@ -103,12 +103,12 @@ export function buildChatGptWebModel(
   if (!templateSlug || templateSlug.startsWith(CHATGPT_WEB_MODEL_PREFIX)) {
     throw new Error("ChatGPT Web model template must be a native Codex model");
   }
-  const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config);
+  const limits = resolveChatGptWebContextLimits(route.backendModel, route.adapterEffort, config, route.slug);
   const efforts = chatGptWebRouteEfforts(route, config);
   for (const effort of efforts) {
     const adapterEffort = route.supportedCodexEfforts ? effort : route.adapterEffort;
     if (adapterEffort === "ultra") throw new Error("Ultra is not a browser effort");
-    const candidate = resolveChatGptWebContextLimits(route.backendModel, adapterEffort, config);
+    const candidate = resolveChatGptWebContextLimits(route.backendModel, adapterEffort, config, route.slug);
     if (JSON.stringify(candidate) !== JSON.stringify(limits)) {
       throw new Error(`Cannot group different context budgets under ${route.slug}`);
     }

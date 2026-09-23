@@ -9,7 +9,13 @@ import * as tunnel from "../src/tunnel";
 import * as tunnelService from "../src/tunnel-service";
 import * as browserHost from "../src/launcher-browser-host";
 import * as browserLogin from "../src/browser-login";
-import { launcherCapabilityProbeRequired, setup, setupDevProfile, setupProxyIsReady } from "../src/setup";
+import {
+  applyChatGptWebContextProfileUpdates,
+  launcherCapabilityProbeRequired,
+  setup,
+  setupDevProfile,
+  setupProxyIsReady,
+} from "../src/setup";
 
 const config = {
   mode: "browser-only" as const,
@@ -54,6 +60,24 @@ test("launcher setup refreshes account capabilities only when missing or explici
     ...verifiedLauncher,
     browserInteractionMode: "manual",
   } as never, false, "automatic")).toBe(true);
+});
+
+test("Web context profile setup updates merge entries and default removes only one route", () => {
+  const config: configModule.AppConfig = {
+    ...configModule.defaultConfig("browser-only"),
+    chatgptWebContextProfiles: {
+      "chatgpt-web/gpt-5.6-sol": "512k" as const,
+      "chatgpt-web/gpt-5.6-pro": "1m" as const,
+    },
+  };
+  applyChatGptWebContextProfileUpdates(config, {
+    "chatgpt-web/gpt-5.6-sol": "default",
+    "chatgpt-web/gpt-6-pro": "512k",
+  });
+  expect(config.chatgptWebContextProfiles).toEqual({
+    "chatgpt-web/gpt-5.6-pro": "1m",
+    "chatgpt-web/gpt-6-pro": "512k",
+  });
 });
 
 for (const development of [false, true]) for (const interaction of ["manual", "automatic"] as const) {

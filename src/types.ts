@@ -7,6 +7,8 @@ export interface CodexParsedRequest {
   _rawBody?: unknown;
   /** Set only by the trusted Web route, never parsed from caller-supplied model metadata. */
   _chatgptModelFamily?: "5.6" | "6";
+  /** Trusted original chatgpt-web/* route slug, captured before routing replaces modelId. */
+  _chatgptWebRouteSlug?: string;
   /** Number of leading raw input items restored from local previous_response_id state. */
   _replayPrefixLen?: number;
   /**
@@ -308,6 +310,7 @@ export interface CodexProviderConfig {
     autoApproveToolCalls?: boolean;
     /** Experimental transport: adapt one context across one, two, or six ChatGPT messages. */
     experimentalBiggerContext?: boolean;
+    chatgptWebContextProfiles?: Partial<Record<string, "512k" | "1m">>;
     experimentalSkillAttachments?: boolean;
     /** Explicitly rebuild each automatic turn in a fresh browser conversation. */
     experimentalFreshConversationPerTurn?: boolean;

@@ -18,6 +18,7 @@ import { useLimits } from "./useLimits";
 import type {
   BrowserInteractionMode,
   BrowserState,
+  ChatGptWebContextProfileSelection,
   DoctorReport,
   Language,
   LauncherSnapshot,
@@ -350,11 +351,7 @@ function LauncherShell({
   const [sessionReminderBusy, setSessionReminderBusy] = useState(false);
   const [sessionReminderDue, setSessionReminderDue] = useState(false);
   const [mcpTargetMode, setMcpTargetMode] = useState<BrowserInteractionMode | null>(null);
-  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(
-    snapshot.state.browserInteractionMode === "automatic"
-      && snapshot.state.coreSetupComplete === true
-      && !snapshot.state.experimentalBiggerContext,
-  );
+  const [biggerContextRecommendationOpen, setBiggerContextRecommendationOpen] = useState(false);
   const [biggerContextRecommendationBusy, setBiggerContextRecommendationBusy] = useState(false);
   const browserSlotRef = useCallback((node: HTMLDivElement | null) => setBrowserSlot(node), []);
   const browserSurfaceActive = surface === "browser"
@@ -1645,11 +1642,11 @@ function SettingsSurface({
       setBusy(false);
     }
   };
-  const setBiggerContext = async (enabled: boolean) => {
+  const setContextProfile = async (slug: string, profile: ChatGptWebContextProfileSelection) => {
     setBusy(true);
     setError(null);
     try {
-      updateState(await api!.setBiggerContext(enabled));
+      updateState(await api!.setChatGptWebContextProfile(slug, profile));
     } catch (cause) {
       setError(messageOf(cause));
     } finally {
@@ -1753,20 +1750,24 @@ function SettingsSurface({
               .catch((cause) => setError(messageOf(cause)))}
           />
         </SettingRow>
-        <SettingRow
-          body={snapshot.state.browserInteractionMode === "manual"
-            ? copy.manualBiggerContextUnavailable
-            : copy.biggerContextBody}
-          label={copy.biggerContext}
-        >
-          <Switch
-            checked={snapshot.state.experimentalBiggerContext}
-            disabled={busy
-              || snapshot.state.browserInteractionMode === "manual"
-              || snapshot.state.coreSetupComplete !== true}
-            onChange={(checked) => void setBiggerContext(checked)}
-          />
-        </SettingRow>
+        {(snapshot.contextProfileModels ?? []).map((model) => (
+          <SettingRow
+            body={snapshot.state.browserInteractionMode === "manual"
+              ? copy.manualContextLengthUnavailable
+              : copy.contextLengthBody}
+            key={model.slug}
+            label={model.label + " · " + copy.contextLength}
+          >
+            <ContextProfilePicker
+              copy={copy}
+              disabled={busy
+                || snapshot.state.browserInteractionMode === "manual"
+                || snapshot.state.coreSetupComplete !== true}
+              onChange={(profile) => void setContextProfile(model.slug, profile)}
+              value={snapshot.state.chatgptWebContextProfiles?.[model.slug] ?? "default"}
+            />
+          </SettingRow>
+        ))}
         <SettingRow body={snapshot.state.browserInteractionMode === "manual"
           ? copy.manualSkillAttachmentsUnavailable : copy.skillAttachmentsBody} label={copy.skillAttachments}>
           <Switch
@@ -2171,6 +2172,41 @@ function InteractionModePicker({
           <small>{copy.manualInteractionBody}</small>
         </span>
       </button>
+    </div>
+  );
+}
+
+function ContextProfilePicker({
+  copy,
+  disabled,
+  onChange,
+  value,
+}: {
+  copy: Copy;
+  disabled: boolean;
+  onChange: (profile: ChatGptWebContextProfileSelection) => void;
+  value: ChatGptWebContextProfileSelection;
+}) {
+  const options: ReadonlyArray<{ value: ChatGptWebContextProfileSelection; label: string }> = [
+    { value: "default", label: copy.contextDefault },
+    { value: "512k", label: "512K" },
+    { value: "1m", label: "1M" },
+  ];
+  return (
+    <div aria-label={copy.contextLength} className="context-profile-picker" role="radiogroup">
+      {options.map(option => (
+        <button
+          aria-checked={value === option.value}
+          className={value === option.value ? "is-selected" : ""}
+          disabled={disabled}
+          key={option.value}
+          onClick={() => onChange(option.value)}
+          role="radio"
+          type="button"
+        >
+          {option.label}
+        </button>
+      ))}
     </div>
   );
 }

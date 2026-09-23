@@ -32,6 +32,10 @@ const {
 const { RuntimeHost } = require("./runtime.cjs");
 const { ensurePackagedRuntime, waitForPackagedRuntimeSource } = require("./runtime-install.cjs");
 const { RuntimeSupervisor } = require("./runtime-supervisor.cjs");
+const {
+  CHATGPT_WEB_CONTEXT_PROFILE_MODELS,
+  normalizeChatGptWebContextProfiles,
+} = require("./context-profiles.cjs");
 const { DEVELOPMENT_PROFILE, resolveLauncherProfile } = require("./profile.cjs");
 const { runtimeBundlePaths } = require("./runtime-command.cjs");
 const { createUpdateController } = require("./update.cjs");
@@ -499,9 +503,16 @@ function smokePassedForCurrentVersion(state) {
 function syncFreshConversationPreference(stateStore, config) {
   const useSavedChats = config?.useSavedChats === true;
   const enabled = config?.experimentalFreshConversationPerTurn === true;
+  const rawContextProfiles = config?.chatgptWebContextProfiles;
+  const chatgptWebContextProfiles = rawContextProfiles && typeof rawContextProfiles === "object" && !Array.isArray(rawContextProfiles)
+    ? Object.fromEntries(Object.entries(rawContextProfiles).filter(([, profile]) => profile === "512k" || profile === "1m"))
+    : {};
   const current = stateStore.read();
   if (runtimeHost?.currentOperation()) return current;
-  if (current.experimentalFreshConversationPerTurn === enabled && current.useSavedChats === useSavedChats) return current;
+  const sameContextProfiles = JSON.stringify(current.chatgptWebContextProfiles) === JSON.stringify(chatgptWebContextProfiles);
+  if (current.experimentalFreshConversationPerTurn === enabled
+    && current.useSavedChats === useSavedChats
+    && sameContextProfiles) return current;
   // Runtime restarts leave browser views alive. Retire completed chats when their
   // persistence policy changes, including changes made by the CLI.
   const retainedKeys = new Set([...browserHost.turnTabs.values()]
@@ -509,7 +520,11 @@ function syncFreshConversationPreference(stateStore, config) {
       && (current.useSavedChats !== useSavedChats || tab.interactionMode === "automatic"))
     .map(tab => tab.conversationKey));
   for (const key of retainedKeys) releaseRetainedConversation(browserHost, key);
-  const state = stateStore.update({ experimentalFreshConversationPerTurn: enabled, useSavedChats });
+  const state = stateStore.update({
+    experimentalFreshConversationPerTurn: enabled,
+    useSavedChats,
+    chatgptWebContextProfiles,
+  });
   send("launcher:state-changed", state);
   return state;
 }
@@ -535,6 +550,7 @@ function registerIpc({ logger, stateStore }) {
       automatic: runtimeHost.setupConnectorName(),
       manual: "Codex Zero Risk",
     },
+    contextProfileModels: CHATGPT_WEB_CONTEXT_PROFILE_MODELS,
     mcpCredentialsConfigured: runtimeHost?.mcpCredentialsConfigured() ?? false,
     logs: logger.recent(),
     urls: { github: GITHUB_URL, x: X_URL, connectors: CONNECTORS_URL, tunnels: TUNNELS_URL, keys: KEYS_URL },
@@ -868,6 +884,18 @@ function registerIpc({ logger, stateStore }) {
       experimentalBiggerContext: result.enabled,
       codexCatalogVerified: IS_DEV_PROFILE ? true : false,
       codexRestartRequired: IS_DEV_PROFILE ? false : true,
+    });
+    send("launcher:state-changed", state);
+    if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });
+    return state;
+  });
+  handle("launcher:context-profile", async (_event, slug, profile) => {
+    const result = await runtimeHost.setChatGptWebContextProfile(slug, profile);
+    const state = stateStore.update({
+      experimentalBiggerContext: false,
+      chatgptWebContextProfiles: normalizeChatGptWebContextProfiles(result.profiles),
+      codexCatalogVerified: IS_DEV_PROFILE,
+      codexRestartRequired: !IS_DEV_PROFILE,
     });
     send("launcher:state-changed", state);
     if (!IS_DEV_PROFILE) startCatalogVerificationMonitor({ logger, stateStore });

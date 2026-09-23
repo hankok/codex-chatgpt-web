@@ -100,15 +100,34 @@ describe("native /models augmentation", () => {
     }, { ...config, proAvailable: false })).toThrow("Cannot group different context budgets");
   });
 
-  test("publishes Bigger Context limits in the Codex model catalog", () => {
+  test("legacy Bigger Context does not change Default Web model catalog limits", () => {
     const config = defaultConfig("full");
     config.extraHighAvailable = true;
     config.proAvailable = true;
     config.experimentalBiggerContext = true;
     const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
     const pro = models.find(model => model.slug === "chatgpt-web/pro")!;
-    expect(pro.context_window).toBe(336_579);
-    expect(pro.auto_compact_token_limit).toBe(285_000);
+    expect(pro.context_window).toBe(112_193);
+    expect(pro.auto_compact_token_limit).toBe(95_000);
+  });
+
+  test("applies explicit Web profiles per route without changing native rows", () => {
+    const baseline = defaultConfig("full");
+    baseline.subagentProtocol = "native";
+    baseline.extraHighAvailable = true;
+    baseline.proAvailable = true;
+    const baselineModels = augmentNativeModelCatalog(source(), baseline).models as Array<Record<string, unknown>>;
+    const profiled = structuredClone(baseline);
+    profiled.chatgptWebContextProfiles = {
+      "chatgpt-web/gpt-5.6-sol": "512k",
+      "chatgpt-web/gpt-5.6-pro": "1m",
+    };
+    const profiledModels = augmentNativeModelCatalog(source(), profiled).models as Array<Record<string, unknown>>;
+    expect(profiledModels.slice(0, 3)).toEqual(baselineModels.slice(0, 3));
+    expect(profiledModels.find(model => model.slug === "chatgpt-web/gpt-5.6-sol")?.context_window).toBe(512_000);
+    expect(profiledModels.find(model => model.slug === "chatgpt-web/gpt-5.6-pro")?.context_window).toBe(1_000_000);
+    expect(profiledModels.find(model => model.slug === "chatgpt-web/gpt-5.6-sol-instant")?.context_window)
+      .toBe(baselineModels.find(model => model.slug === "chatgpt-web/gpt-5.6-sol-instant")?.context_window);
   });
 
   test("keeps native Sol selectable in the bounded Compatibility V1 registry", () => {

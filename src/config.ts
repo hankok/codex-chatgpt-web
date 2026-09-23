@@ -6,6 +6,9 @@ import { tmpdir } from "node:os";
 import {
   CHATGPT_WEB_ZERO_RISK_BACKEND_MODEL,
   CHATGPT_WEB_ZERO_RISK_PRO_BACKEND_MODEL,
+  isConfigurableChatGptWebContextProfileSlug,
+  type ChatGptWebContextProfile,
+  type ChatGptWebContextProfiles,
 } from "./chatgpt-web-models";
 import type { CodexProviderConfig } from "./types";
 import { VERSION } from "./version";
@@ -14,6 +17,7 @@ export type RuntimeMode = "browser-only" | "full";
 export type BrowserHostMode = "managed-chrome" | "launcher";
 export type BrowserInteractionMode = "automatic" | "manual";
 export type SubagentProtocol = "compatibility-v1" | "native";
+export type { ChatGptWebContextProfile, ChatGptWebContextProfiles } from "./chatgpt-web-models";
 
 /**
  * ChatGPT caches a connector's public MCP contract by connector identity. The direct turn-token
@@ -85,6 +89,7 @@ export interface AppConfig {
   extraHighAvailable?: boolean;
   proAvailable: boolean;
   experimentalBiggerContext: boolean;
+  chatgptWebContextProfiles: ChatGptWebContextProfiles;
   experimentalSkillAttachments: boolean;
   experimentalFreshConversationPerTurn: boolean;
   useSavedChats: boolean;
@@ -217,6 +222,7 @@ export function defaultConfig(mode: RuntimeMode = "browser-only"): AppConfig {
     extraHighAvailable: false,
     proAvailable: false,
     experimentalBiggerContext: false,
+    chatgptWebContextProfiles: {},
     experimentalSkillAttachments: false,
     experimentalFreshConversationPerTurn: false,
     useSavedChats: false,
@@ -501,6 +507,21 @@ function parseConfig(value: unknown, path: string): AppConfig {
     && typeof parsed.experimentalBiggerContext !== "boolean") {
     throw new Error(`Invalid experimentalBiggerContext in ${path}`);
   }
+  const rawContextProfiles = (parsed as Partial<AppConfig> & { chatgptWebContextProfiles?: unknown })
+    .chatgptWebContextProfiles;
+  if (rawContextProfiles !== undefined
+    && (!rawContextProfiles || typeof rawContextProfiles !== "object" || Array.isArray(rawContextProfiles))) {
+    throw new Error(`Invalid chatgptWebContextProfiles in ${path}`);
+  }
+  const chatgptWebContextProfiles: ChatGptWebContextProfiles = {};
+  if (rawContextProfiles) {
+    for (const [slug, profile] of Object.entries(rawContextProfiles)) {
+      if (!isConfigurableChatGptWebContextProfileSlug(slug) || (profile !== "512k" && profile !== "1m")) {
+        throw new Error(`Invalid chatgptWebContextProfiles in ${path}`);
+      }
+      chatgptWebContextProfiles[slug] = profile;
+    }
+  }
   if (parsed.zeroRiskProEnabled !== undefined && typeof parsed.zeroRiskProEnabled !== "boolean") {
     throw new Error(`Invalid zeroRiskProEnabled in ${path}`);
   }
@@ -547,6 +568,7 @@ function parseConfig(value: unknown, path: string): AppConfig {
     solAvailable,
     proAvailable,
     experimentalBiggerContext,
+    chatgptWebContextProfiles,
     experimentalSkillAttachments,
     experimentalFreshConversationPerTurn,
     useSavedChats,
@@ -605,6 +627,7 @@ export function providerConfig(config: AppConfig): CodexProviderConfig {
       extraHighAvailable: !manual && config.extraHighAvailable === true,
       proAvailable: manual ? false : config.proAvailable,
       experimentalBiggerContext: manual ? false : config.experimentalBiggerContext,
+      chatgptWebContextProfiles: manual ? {} : { ...config.chatgptWebContextProfiles },
       experimentalSkillAttachments: manual ? false : config.experimentalSkillAttachments,
       experimentalFreshConversationPerTurn: !manual && config.experimentalFreshConversationPerTurn === true,
       useSavedChats: config.useSavedChats === true,
