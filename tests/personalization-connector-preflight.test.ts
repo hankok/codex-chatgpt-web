@@ -591,7 +591,7 @@ test("the absolute personalization deadline always returns the connector deadlin
   Date.now = () => now;
   const absent = visibleLocator(() => {
     countReads += 1;
-    if (countReads === 2) now += 30_001;
+    if (countReads === 2) now += 120_001;
     return 0;
   });
   try {
@@ -660,7 +660,7 @@ test("an absolute deadline never hides a failed personalization rollback", async
         async () => {
           proofCalls += 1;
           if (proofCalls === 1) return false;
-          now += 30_001;
+          now += 120_001;
           return false;
         },
       );

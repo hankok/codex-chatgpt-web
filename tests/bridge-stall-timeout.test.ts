@@ -68,6 +68,7 @@ test("an adapter that keeps heartbeating is never cancelled, however long it tak
 });
 
 test("the stall budget is configurable and falls back to the shipped default", () => {
+  expect(DEFAULT_STALL_TIMEOUT_SEC).toBe(1_200);
   expect(resolveStallTimeoutSec(undefined)).toBe(DEFAULT_STALL_TIMEOUT_SEC);
   expect(resolveStallTimeoutSec(Number.NaN)).toBe(DEFAULT_STALL_TIMEOUT_SEC);
   expect(resolveStallTimeoutSec(900)).toBe(900);

@@ -542,8 +542,21 @@ test("Luna turns without a retained conversation never send connector identity a
   expect(runExclusive.slice(connectorIdentity - 260, connectorIdentity)).toContain("turn.nativeConnector");
 });
 
+test("browser timeout budgets use the compatibility release values", () => {
+  const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+
+  expect(CHATGPT_COMPLETION_SETTLE_MS).toBe(90_000);
+  expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBe(1_200_000);
+  expect(browserStageTimeouts.multipartStageSend).toBe(1_200_000);
+  expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(60_000);
+  expect(workerSource).toContain("const CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS = 60_000;");
+  expect(workerSource).toContain("const CHATGPT_PERSONALIZATION_PREFLIGHT_TIMEOUT_MS = 120_000;");
+  expect(workerSource).toContain("const CHATGPT_PERSONALIZATION_CLEANUP_TIMEOUT_MS = 60_000;");
+  expect(workerSource).not.toContain("CHATGPT_TOOL_COMPLETION_SETTLE_MS");
+});
+
 test("a stalled DOM observation fails within its probe budget", async () => {
-  expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(5_000);
+  expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(60_000);
   expect(MAX_CHATGPT_BROWSER_PAGE_REBINDS).toBe(2);
   await expect(withChatGptBrowserObservationTimeout(
     new Promise<never>(() => {}),
@@ -1314,7 +1327,7 @@ test("connector selection re-resolves the active composer after ChatGPT replaces
     fill: async (value: string) => { calls.push(["fill", value]); },
     focus: async () => { calls.push(["focus"]); },
     pressSequentially: async (value: string, options: { delay: number; signal?: AbortSignal; timeout: number }) => {
-      expect(options).toEqual({ delay: 25, signal: undefined, timeout: 10_000 });
+      expect(options).toEqual({ delay: 25, signal: undefined, timeout: 60_000 });
       calls.push(["pressSequentially", value]);
     },
     press: async (key: string) => {
@@ -4233,6 +4246,7 @@ test("the bundled helper is adopted only for the packaged runtime layout", () =>
 
 test("a staged Bigger Context part gets an acknowledgement window sized to its payload", () => {
   // A staged part is much larger than an ordinary prompt and ChatGPT reads it before answering.
+  expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBe(1_200_000);
   expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBeGreaterThan(CHATGPT_RESPONSE_DOM_GRACE_MS);
 
   // No MCP activity exists while an inert part is being ingested, so the response and send budgets
