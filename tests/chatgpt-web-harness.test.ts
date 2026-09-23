@@ -368,6 +368,43 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
+  test("returns a retryable error instead of a simulated Native2 turn-token lockout reply", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-false-lockout-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: `browser://chatgpt-false-lockout-${Date.now()}`,
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    const answer = "The Codex Native2 execution layer rejected every action with a turn-token invalid, expired, or revoked error.";
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      const prepared = await turn.prepare();
+      prepared.release();
+      turn.onTextDelta(answer);
+      return answer;
+    };
+    const events: AdapterEvent[] = [];
+    try {
+      await createChatGptWebAdapter(provider).runTurn!(
+        rawWireRequest(environmentXml),
+        { headers: new Headers() },
+        event => events.push(event),
+      );
+      expect(events.at(-1)).toMatchObject({
+        type: "error",
+        message: "ChatGPT conversation entered a simulated safety/tool lockout; releasing retained conversation.",
+        status: 502,
+        errorType: "server_error",
+        code: "upstream_server_error",
+        retryable: true,
+      });
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
   test.each([false, true])("sequential native messages honor fresh conversation mode=%s", async freshConversation => {
     const socketPath = brokerTestEndpoint(`cgw-retained-messages-${process.pid}-${Date.now()}`);
     const provider: CodexProviderConfig = {
@@ -3333,6 +3370,7 @@ describe("ChatGPT outer-native harness v4", () => {
     const client = new Client({ name: "codex-chatgpt-web-mcp-abort-test", version: "1.0.0" });
 
     try {
+      expect(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS).toBe(110_000);
       expect(chatGptMcpInvocationTimeout(environment)).toBe(CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS);
       expect(chatGptMcpInvocationTimeout({ ...environment, expiresAt: 1_500 }, 1_000)).toBe(500);
       await client.connect(transport);

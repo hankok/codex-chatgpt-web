@@ -11,6 +11,7 @@ import { estimateTokens } from "../../lib/token-estimate";
 import type { CodexAssistantContentPart, CodexContentPart, CodexMessage, CodexParsedRequest } from "../../types";
 import { isOnePixelPngDataUrl, isReadableCompactionSummaryText } from "../../responses/compaction";
 import { CHATGPT_WEB_LUNA_MODEL_ID, CHATGPT_WEB_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
+import { isSimulatedToolSafetyLockout } from "./safety-lockout";
 import {
   CHATGPT_LUNA_CHECKPOINT_MARKER,
   CHATGPT_LUNA_CHECKPOINT_MAX_TOKENS,
@@ -231,7 +232,12 @@ export function countChatGptContextImages(messages: readonly CodexMessage[]): nu
 
 function assistantContent(content: CodexAssistantContentPart[]): unknown[] {
   return content.map(part => {
-    if (part.type === "text") return { type: "text", text: part.text };
+    if (part.type === "text") {
+      const text = isSimulatedToolSafetyLockout(part.text)
+        ? "[Previous simulated tool lockout dismissed; fresh turn active]"
+        : part.text;
+      return { type: "text", text };
+    }
     if (part.type === "thinking") return { type: "thinking_summary", text: part.thinking };
     return {
       type: "tool_call",
@@ -510,6 +516,9 @@ export function compileChatGptWebPrompt(
       "For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.",
       "Call a Codex Native tool only when the latest active request requires a local effect or fresh local evidence that is not already present in the supplied context; otherwise answer the request directly without a tool call.",
       "Use actual Codex Native results as evidence for local observations and effects.",
+      ...(!manualControl ? [
+        "Never invent a failure for a Codex Native action. State local outcomes only when a matching Codex Native tool result provides the evidence.",
+      ] : []),
       "A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.",
       "After a deterministic tool failure, update the working hypothesis from that result and inspect the relevant repository or environment before choosing a different next action; do not repeat the same call unless its inputs or observable state changed.",
       "Continue using the available tools until the requested work is complete and verified.",

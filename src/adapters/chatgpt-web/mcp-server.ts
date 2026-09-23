@@ -39,10 +39,10 @@ const jsonArgumentsSchema = z.record(z.string(), z.unknown()).default({});
 // Match Codex's default wait interval while returning before the MCP invocation deadline.
 export const CHATGPT_WEB_AGENT_WAIT_POLL_MS = 30_000;
 const AGENT_WAIT_TRANSPORT_RULE = `ChatGPT Web transport rule: wait for exactly ${CHATGPT_WEB_AGENT_WAIT_POLL_MS / 1_000} seconds per call, matching the Codex default, then release the MCP channel so spawned Web agents can use their own tools. A wait timeout is not task completion; check agent progress and wait again if needed. Keep the native tool's declared arguments.`;
-// The OpenAI tunnel currently owns a two-minute command-response deadline. The local MCP server
-// must settle first so an abandoned native tool call is returned as an MCP error instead of
-// letting the tunnel tear down and poison its long-lived stdio transport.
-export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 90_000;
+// The OpenAI tunnel currently owns a two-minute command-response deadline. Allow up to 110 seconds
+// for long-running native tools on Windows while keeping 10 seconds for the MCP error to reach
+// ChatGPT before the tunnel tears down and poisons its long-lived stdio transport.
+export const CHATGPT_WEB_MCP_INVOCATION_TIMEOUT_MS = 110_000;
 
 const ZERO_RISK_MCP_INSTRUCTIONS = [
   "For each pasted Codex Web GPT request, begin with codex_turn_start using the request_id in its request block.",
