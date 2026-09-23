@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import type { Page } from "playwright-core";
-import { CHATGPT_BROWSER_OBSERVATION_POLL_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS, CHATGPT_TOOL_COMPLETION_SETTLE_MS, ChatGptCompletionTracker, chatGptCompletionSettleMs, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
+import { CHATGPT_BROWSER_OBSERVATION_POLL_MS, CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS, CHATGPT_COMPLETION_SETTLE_MS, CHATGPT_EXTERNAL_PROGRESS_CLOCK_SKEW_MS, CHATGPT_EXTERNAL_PROGRESS_STALL_CEILING_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_POLL_MS, CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS, CHATGPT_TOOL_COMPLETION_SETTLE_MS, CHATGPT_TOOL_FINAL_TAIL_STABILITY_MS, ChatGptCompletionTracker, ChatGptFinalTailTracker, chatGptCompletionSettleMs, chatGptExternalProgressSuppressesDomHealth, CHATGPT_RESPONSE_DOM_GRACE_MS, MAX_CHATGPT_INTERNAL_OBSERVATION_FAULTS, CHATGPT_COMPOSER_DOCUMENT_END_KEY, CHATGPT_COMPOSER_SELECT_ALL_KEY, ChatGptBrowserObservationTimeoutError, ChatGptBrowserWorker, ChatGptPromptAttachmentIntegrityError, ChatGptTurnDomHealthTracker, ChatGptVisibleTraceTracker, MAX_CHATGPT_BROWSER_PAGE_REBINDS, MAX_CHATGPT_BROWSER_TABS, MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS, assertChatGptWebInputWithinLimits, assertChatGptWebMultipartInputWithinLimits, browserDiagnosticCheckpoint, chatGptConnectorAttachmentMode, chatGptNewTurnIdentity, chatGptReboundTurnIdentity, chatGptSubmissionEvidence, connectAfterClosingBrowserConnection, dismissChatGptTemporaryChatOnboarding, isChatGptTraceControl, redactChatGptUiDiagnostic, resolveBrowserConfig, resolveChatGptToolConfirmation, resolveChatGptWebMultipartStagingMode, sanitizeChatGptBrowserDiagnosticState, setChatGptThinkMode, stripChatGptTraceControlSuffix, throwIfChatGptRateLimitDialog, throwIfChatGptSessionFailureAlert, throwIfChatGptTerminalErrorAlert, withChatGptBrowserObservationTimeout, CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS, browserStageTimeouts, ChatGptSuspensionClock, remainingStageBudgetMs } from "../src/adapters/chatgpt-web/browser-worker";
 import { ensureChatGptPersonalizedConnectorAccess, navigateToTemporaryChatWithRecovery } from "../src/adapters/chatgpt-web/browser-worker";
 import { chatGptStoppedThinkingError } from "../src/adapters/chatgpt-web/adapter-error";
 import { CHATGPT_WEB_MODEL_ID } from "../src/adapters/chatgpt-web/model";
@@ -3835,6 +3835,97 @@ test("all completion paths use the longer completion settle window", () => {
   expect(chatGptCompletionSettleMs(true)).toBe(CHATGPT_TOOL_COMPLETION_SETTLE_MS);
   expect(chatGptCompletionSettleMs(false)).toBe(240_000);
   expect(chatGptCompletionSettleMs(true)).toBe(240_000);
+});
+
+test("tool-capable final answer tails use an isolated short stability window", () => {
+  expect(CHATGPT_TOOL_FINAL_TAIL_STABILITY_MS).toBe(2_000);
+  expect(CHATGPT_COMPLETION_SETTLE_MS).toBe(240_000);
+  expect(CHATGPT_TOOL_COMPLETION_SETTLE_MS).toBe(240_000);
+
+  const tracker = new ChatGptFinalTailTracker();
+  const finalAnswer = {
+    responsePresent: true,
+    running: false,
+    currentText: "complete final answer",
+    currentHtml: "<p>complete final answer</p>",
+    completionActionVisible: true,
+    externalToolCallsInFlight: false,
+    externalProgressRevision: 3,
+  };
+  expect(tracker.update(finalAnswer, 1_000)).toBeFalse();
+  expect(tracker.update(finalAnswer, 2_999)).toBeFalse();
+  expect(tracker.update(finalAnswer, 3_000)).toBeTrue();
+});
+
+test("tool-capable final answer tail stability resets on changes and activity", () => {
+  const textChangeTracker = new ChatGptFinalTailTracker();
+  const stable = {
+    responsePresent: true,
+    running: false,
+    currentText: "answer",
+    currentHtml: "<p>answer</p>",
+    completionActionVisible: true,
+    externalToolCallsInFlight: false,
+    externalProgressRevision: 1,
+  };
+  expect(textChangeTracker.update(stable, 1_000)).toBeFalse();
+  const extended = { ...stable, currentText: "answer complete", currentHtml: "<p>answer complete</p>" };
+  expect(textChangeTracker.update(extended, 2_000)).toBeFalse();
+  expect(textChangeTracker.update(extended, 3_999)).toBeFalse();
+  expect(textChangeTracker.update(extended, 4_000)).toBeTrue();
+
+  const htmlChangeTracker = new ChatGptFinalTailTracker();
+  expect(htmlChangeTracker.update(stable, 1_000)).toBeFalse();
+  const hydrated = { ...stable, currentHtml: '<p data-hydrated="true">answer</p>' };
+  expect(htmlChangeTracker.update(hydrated, 2_000)).toBeFalse();
+  expect(htmlChangeTracker.update(hydrated, 3_999)).toBeFalse();
+  expect(htmlChangeTracker.update(hydrated, 4_000)).toBeTrue();
+
+  const progressChangeTracker = new ChatGptFinalTailTracker();
+  expect(progressChangeTracker.update(stable, 1_000)).toBeFalse();
+  const progressed = { ...stable, externalProgressRevision: 2 };
+  expect(progressChangeTracker.update(progressed, 2_000)).toBeFalse();
+  expect(progressChangeTracker.update(progressed, 3_999)).toBeFalse();
+  expect(progressChangeTracker.update(progressed, 4_000)).toBeTrue();
+
+  const incompleteUiTracker = new ChatGptFinalTailTracker();
+  expect(incompleteUiTracker.update(stable, 1_000)).toBeFalse();
+  expect(incompleteUiTracker.update({ ...stable, completionActionVisible: false }, 1_500)).toBeFalse();
+  expect(incompleteUiTracker.update(stable, 2_000)).toBeFalse();
+  expect(incompleteUiTracker.update(stable, 3_999)).toBeFalse();
+  expect(incompleteUiTracker.update(stable, 4_000)).toBeTrue();
+
+  const activityTracker = new ChatGptFinalTailTracker();
+  expect(activityTracker.update(stable, 1_000)).toBeFalse();
+  expect(activityTracker.update({ ...stable, externalToolCallsInFlight: true }, 2_000)).toBeFalse();
+  const resumed = { ...stable, externalProgressRevision: 2 };
+  expect(activityTracker.update(resumed, 2_500)).toBeFalse();
+  expect(activityTracker.update(resumed, 4_499)).toBeFalse();
+  expect(activityTracker.update(resumed, 4_500)).toBeTrue();
+});
+
+test("tool-capable final answer tail requires new text after a tool batch", () => {
+  const tracker = new ChatGptFinalTailTracker();
+  const preToolAnswer = {
+    responsePresent: true,
+    running: false,
+    currentText: "answer before tool",
+    currentHtml: "<p>answer before tool</p>",
+    completionActionVisible: true,
+    externalToolCallsInFlight: false,
+    externalProgressRevision: 1,
+  };
+  expect(tracker.observeToolBatch(1, preToolAnswer.currentText)).toBeTrue();
+  expect(tracker.update(preToolAnswer, 1_000)).toBeFalse();
+  const postToolAnswer = {
+    ...preToolAnswer,
+    currentText: "answer after tool",
+    currentHtml: "<p>answer after tool</p>",
+    externalProgressRevision: 2,
+  };
+  expect(tracker.update(postToolAnswer, 1_500)).toBeFalse();
+  expect(tracker.update(postToolAnswer, 3_499)).toBeFalse();
+  expect(tracker.update(postToolAnswer, 3_500)).toBeTrue();
 });
 
 test("Full mode has no fixed post-tool final-answer deadline", () => {

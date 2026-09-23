@@ -136,6 +136,8 @@ export const CHATGPT_COMPLETION_SETTLE_MS = 240_000;
 // Tool-capable turns use the same long quiet window so delayed MCP claims cannot retire the browser
 // turn while ChatGPT is still settling.
 export const CHATGPT_TOOL_COMPLETION_SETTLE_MS = 240_000;
+/** Release a stable final Markdown tail without inheriting the tool turn's long completion window. */
+export const CHATGPT_TOOL_FINAL_TAIL_STABILITY_MS = 2_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";
@@ -1513,6 +1515,53 @@ export class ChatGptCompletionTracker {
       this.candidate = undefined;
       return false;
     }
+    if (this.candidate?.signature !== signature) {
+      this.candidate = { signature, since: now };
+      return false;
+    }
+    return now - this.candidate.since >= this.stableMs;
+  }
+}
+
+export class ChatGptFinalTailTracker {
+  private candidate?: { signature: string; since: number };
+  private lastToolBatchRevision = 0;
+  private postToolAnswerBaselineText?: string;
+
+  constructor(private readonly stableMs = CHATGPT_TOOL_FINAL_TAIL_STABILITY_MS) {}
+
+  needsToolBatchObservation(revision: number): boolean {
+    if (!Number.isSafeInteger(revision) || revision < this.lastToolBatchRevision) {
+      throw new Error("ChatGPT final-tail tracker received an invalid tool-batch revision");
+    }
+    return revision > this.lastToolBatchRevision;
+  }
+
+  observeToolBatch(revision: number, currentText: string): boolean {
+    if (!this.needsToolBatchObservation(revision)) return false;
+    this.postToolAnswerBaselineText = currentText;
+    this.lastToolBatchRevision = revision;
+    this.candidate = undefined;
+    return true;
+  }
+
+  update(
+    state: Parameters<typeof chatGptTurnIsComplete>[0] & {
+      externalToolCallsInFlight?: boolean;
+      externalProgressRevision?: number;
+    },
+    now = Date.now(),
+  ): boolean {
+    if (state.externalToolCallsInFlight || !chatGptTurnIsComplete(state)) {
+      this.candidate = undefined;
+      return false;
+    }
+    if (this.postToolAnswerBaselineText === state.currentText) {
+      this.candidate = undefined;
+      return false;
+    }
+
+    const signature = `${state.currentText}\0${state.currentHtml ?? state.currentText}\0${state.externalProgressRevision ?? ""}`;
     if (this.candidate?.signature !== signature) {
       this.candidate = { signature, since: now };
       return false;
@@ -4781,6 +4830,9 @@ export class ChatGptBrowserWorker {
       const completionTracker = new ChatGptCompletionTracker(
         chatGptCompletionSettleMs(turn.externalProgress !== undefined),
       );
+      const finalTailTracker = turn.externalProgress
+        ? new ChatGptFinalTailTracker()
+        : undefined;
       const finalSubmissionEvidence = await this.runStage(
         turn.traceId,
         "send",
@@ -4953,6 +5005,10 @@ export class ChatGptBrowserWorker {
             externalProgressSnapshot.lastToolBatchRevision,
             snapshot.visibleText,
           );
+          finalTailTracker?.observeToolBatch(
+            externalProgressSnapshot.lastToolBatchRevision,
+            snapshot.visibleText,
+          );
           await turn.externalProgress.acknowledgeToolBatch(externalProgressSnapshot.lastToolBatchRevision);
         }
         const externalProgressLive = chatGptExternalProgressSuppressesDomHealth(
@@ -4960,6 +5016,16 @@ export class ChatGptBrowserWorker {
           Date.now(),
         );
         const externalToolCallsInFlight = chatGptExternalToolCallsAreInFlight(externalProgressSnapshot);
+        if (!snapshot.responsePresent) {
+          finalTailTracker?.update({
+            responsePresent: false,
+            running: false,
+            currentText: "",
+            completionActionVisible: false,
+            externalToolCallsInFlight,
+            externalProgressRevision: externalProgressSnapshot?.revision,
+          });
+        }
         if (!snapshot.responsePresent && externalProgressLive) {
           // Current-turn MCP activity proves that ChatGPT is still executing even if its renderer
           // temporarily cannot expose the response subtree. DOM remains authoritative for text and
@@ -4978,18 +5044,24 @@ export class ChatGptBrowserWorker {
           }
           const textDelta = (() => {
             try {
-              // In turns without local tools, ChatGPT's response-scoped completion controls are
-              // enough to release the final stable Markdown block. The turn itself still observes
-              // the configured long settle window before it returns. Tool-capable turns keep the
-              // tail buffered because the page can look complete between MCP calls.
-              const terminalTailReady = !mode.localTools
-                && turn.externalProgress === undefined
-                && chatGptTurnIsComplete({
+              const terminalTailState = {
                 responsePresent: snapshot.responsePresent,
                 running,
                 currentText: snapshot.visibleText,
+                currentHtml: snapshot.fullHtml,
                 completionActionVisible: snapshot.completionActionVisible,
-              });
+              };
+              // Tool-capable turns use their own short tail window, reset by text/HTML changes and
+              // external progress. Final turn completion still observes the separate long settle.
+              const terminalTailReady = finalTailTracker
+                ? finalTailTracker.update({
+                  ...terminalTailState,
+                  externalToolCallsInFlight,
+                  externalProgressRevision: externalProgressSnapshot?.revision,
+                })
+                : !mode.localTools
+                  && turn.externalProgress === undefined
+                  && chatGptTurnIsComplete(terminalTailState);
               return markdownBuffer.observe(snapshot.markdownSegments, Date.now(), terminalTailReady);
             } catch (error) {
               return throwMarkdownConsistencyError(error);
