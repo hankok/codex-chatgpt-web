@@ -1,6 +1,6 @@
 # Per-model ChatGPT Web context length profiles
 
-**Status:** Conversational design approved; awaiting spec review
+**Status:** Approved for implementation planning
 
 **Date:** 2026-09-23
 
