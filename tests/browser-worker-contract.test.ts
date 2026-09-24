@@ -4288,6 +4288,38 @@ test("a staged Bigger Context part gets an acknowledgement window sized to its p
 
 });
 
+test("a completed multipart acknowledgement advances after one second while an unfinished one keeps waiting", async () => {
+  const worker = await import("../src/adapters/chatgpt-web/browser-worker");
+  const stableMs = Reflect.get(worker, "CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS") as number | undefined;
+  expect(stableMs).toBe(1_000);
+
+  const tracker = new ChatGptCompletionTracker(stableMs!);
+  const completed = {
+    responsePresent: true,
+    running: false,
+    currentText: "CODEX_MULTIPART_ACK ctx_example 1/6 digest",
+    currentHtml: "<p>CODEX_MULTIPART_ACK ctx_example 1/6 digest</p>",
+    completionActionVisible: true,
+  };
+  expect(tracker.update({ ...completed, running: true, completionActionVisible: false }, 1_000)).toBeFalse();
+  expect(tracker.update(completed, 2_000)).toBeFalse();
+  expect(tracker.update(completed, 2_999)).toBeFalse();
+  expect(tracker.update(completed, 3_000)).toBeTrue();
+
+  const finalAnswerTracker = new ChatGptCompletionTracker();
+  expect(finalAnswerTracker.update(completed, 2_000)).toBeFalse();
+  expect(finalAnswerTracker.update(completed, 3_000)).toBeFalse();
+
+  const source = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
+  const acknowledgementLoop = source.slice(
+    source.indexOf("private async waitForMultipartAcknowledgement("),
+    source.indexOf("private async resetCompactionComposerForRetry("),
+  );
+  expect(acknowledgementLoop).toContain(
+    "new ChatGptCompletionTracker(CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS)",
+  );
+});
+
 test("the suspension clock charges only tick gaps that mean the process was frozen", () => {
   const clock = new ChatGptSuspensionClock(1_000, 5_000);
   clock.tick(1_000);

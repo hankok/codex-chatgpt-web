@@ -126,6 +126,8 @@ export const CHATGPT_RESPONSE_DOM_GRACE_MS = 60_000;
  * the bounded staged-send budget.
  */
 export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 1_200_000;
+// A completed stage acknowledgement is a protocol boundary, not a final model answer.
+export const CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS = 1_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 export const CHATGPT_COMPLETION_SETTLE_MS = 90_000;
@@ -3641,7 +3643,7 @@ export class ChatGptBrowserWorker {
     deadline: number | undefined,
     abortSignal?: AbortSignal,
     externalProgress?: ChatGptTurnProgressReader,
-    completionTracker = new ChatGptCompletionTracker(),
+    completionTracker = new ChatGptCompletionTracker(CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS),
   ): Promise<void> {
     // A staged message may briefly create an assistant shell and then replace it while ChatGPT
     // ingests the attached context. The ordinary 60-second missing-response verdict would cut the
