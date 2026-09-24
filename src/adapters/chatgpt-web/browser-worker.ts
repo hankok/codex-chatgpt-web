@@ -130,7 +130,9 @@ export const CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS = 1_200_000;
 export const CHATGPT_MULTIPART_ACKNOWLEDGEMENT_STABLE_MS = 1_000;
 export const CHATGPT_EMPTY_RESPONSE_GRACE_MS = 10_000;
 export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
-export const CHATGPT_COMPLETION_SETTLE_MS = 90_000;
+// Once the response-scoped completion action is visible and no tool is in flight, keep only a
+// short stability check. Longer budgets above protect unfinished work, not a completed answer.
+export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
 const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";

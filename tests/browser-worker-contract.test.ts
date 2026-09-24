@@ -542,10 +542,10 @@ test("Luna turns without a retained conversation never send connector identity a
   expect(runExclusive.slice(connectorIdentity - 260, connectorIdentity)).toContain("turn.nativeConnector");
 });
 
-test("browser timeout budgets use the compatibility release values", () => {
+test("unfinished browser work keeps long budgets while completed answers settle promptly", () => {
   const workerSource = readFileSync(new URL("../src/adapters/chatgpt-web/browser-worker.ts", import.meta.url), "utf8");
 
-  expect(CHATGPT_COMPLETION_SETTLE_MS).toBe(90_000);
+  expect(CHATGPT_COMPLETION_SETTLE_MS).toBe(2_000);
   expect(CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS).toBe(1_200_000);
   expect(browserStageTimeouts.multipartStageSend).toBe(1_200_000);
   expect(CHATGPT_BROWSER_OBSERVATION_PROBE_TIMEOUT_MS).toBe(60_000);
@@ -4213,6 +4213,22 @@ test("Full mode has no fixed post-tool final-answer deadline", () => {
   expect(tracker.update({
     ...finalAnswer,
   }, 3_100 + CHATGPT_COMPLETION_SETTLE_MS)).toBeTrue();
+});
+
+test("a completed final answer returns promptly without weakening the unfinished-tool veto", () => {
+  const tracker = new ChatGptCompletionTracker();
+  const finished = {
+    responsePresent: true,
+    running: false,
+    currentText: "final answer after tool",
+    currentHtml: "<p>final answer after tool</p>",
+    completionActionVisible: true,
+  };
+  tracker.observeToolBatch(1, "before tool");
+  expect(tracker.update({ ...finished, externalToolCallsInFlight: true }, 1_000)).toBeFalse();
+  expect(tracker.update({ ...finished, externalToolCallsInFlight: false }, 2_000)).toBeFalse();
+  expect(tracker.update({ ...finished, externalToolCallsInFlight: false }, 3_999)).toBeFalse();
+  expect(tracker.update({ ...finished, externalToolCallsInFlight: false }, 4_000)).toBeTrue();
 });
 
 test("Full mode fails closed when ChatGPT exposes completion without a post-tool final answer", () => {
