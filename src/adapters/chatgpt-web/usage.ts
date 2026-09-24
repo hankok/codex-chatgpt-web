@@ -62,9 +62,9 @@ export function estimateChatGptWebInputTokens(
 }
 
 /**
- * The compaction threshold chooses the initial part count. Whole records and composer limits
- * can require more parts even when the total token estimate is small. Plan before submission;
- * compaction always receives all six parts without passing through the legacy inline budget.
+ * Keep a turn inline when its complete message fits ChatGPT's per-message transport limits.
+ * Otherwise choose enough parts for that boundary while preserving the selected context window.
+ * Expanded context profiles may use six parts; the default profile is capped at three.
  */
 export function resolveBiggerContextMultipartParts(
   parsed: CodexParsedRequest,
@@ -78,7 +78,11 @@ export function resolveBiggerContextMultipartParts(
     throw new Error("Bigger Context is unavailable for Luna because its accumulated browser transcript still shares one 28,000-token transport budget");
   }
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
-  if (parsed._compactionRequest) return CHATGPT_BIGGER_CONTEXT_PARTS;
+  const explicitContextProfile = parsed._chatgptWebRouteSlug
+    ? capabilities.chatgptWebContextProfiles?.[parsed._chatgptWebRouteSlug]
+    : undefined;
+  const expandedContext = explicitContextProfile !== undefined || capabilities.experimentalBiggerContext === true;
+  if (parsed._compactionRequest && expandedContext) return CHATGPT_BIGGER_CONTEXT_PARTS;
   const { contextWindow } = resolveChatGptWebContextLimits(
     CHATGPT_WEB_BACKEND_MODEL,
     mode.effort,
@@ -109,12 +113,14 @@ export function resolveBiggerContextMultipartParts(
       < contextWindow;
   };
   if (fits(inline)) return undefined;
-  for (const parts of [2, CHATGPT_THREE_PART_CONTEXT_PARTS, CHATGPT_BIGGER_CONTEXT_PARTS] as const) {
+  const candidatePartCounts = expandedContext
+    ? [2, CHATGPT_THREE_PART_CONTEXT_PARTS, CHATGPT_BIGGER_CONTEXT_PARTS] as const
+    : [2, CHATGPT_THREE_PART_CONTEXT_PARTS] as const;
+  for (const parts of candidatePartCounts) {
     if (fits(compile(parts))) return parts;
   }
-  // Six is the protocol maximum. Returning it lets the browser preflight produce the precise
-  // aggregate or atomic-record error instead of hiding the selected profile behind the planner.
-  return CHATGPT_BIGGER_CONTEXT_PARTS;
+  // Let browser preflight report the precise aggregate or atomic-record limit failure.
+  return expandedContext ? CHATGPT_BIGGER_CONTEXT_PARTS : CHATGPT_THREE_PART_CONTEXT_PARTS;
 }
 
 export function biggerContextPartCount(
@@ -154,12 +160,8 @@ export function estimateChatGptWebUsage(
   _experimentalBiggerContext = false,
   experimentalSkillAttachments = false,
 ): CodexUsage {
-  const explicitContextProfile = parsed._chatgptWebRouteSlug
-    ? capabilities.chatgptWebContextProfiles?.[parsed._chatgptWebRouteSlug]
-    : undefined;
   const multipartEnabled = parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
-    && !isChatGptWebZeroRiskBackendModel(parsed.modelId)
-    && (explicitContextProfile !== undefined || _experimentalBiggerContext);
+    && !isChatGptWebZeroRiskBackendModel(parsed.modelId);
   const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
     experimentalSkillAttachments,
     experimentalMultipartParts: multipartEnabled
