@@ -368,7 +368,7 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test("returns a retryable error instead of a simulated Native2 turn-token lockout reply", async () => {
+  test("returns a retryable error for an upstream Native2 tool lockout reply", async () => {
     const socketPath = brokerTestEndpoint(`cgw-false-lockout-${process.pid}-${Date.now()}`);
     const provider: CodexProviderConfig = {
       adapter: "chatgpt-web",
@@ -393,12 +393,100 @@ describe("ChatGPT outer-native harness v4", () => {
       );
       expect(events.at(-1)).toMatchObject({
         type: "error",
-        message: "ChatGPT conversation entered a simulated safety/tool lockout; releasing retained conversation.",
+        message: "ChatGPT reported an upstream safety/tool lockout before an outer-runtime rejection; releasing retained conversation.",
         status: 502,
         errorType: "server_error",
         code: "upstream_server_error",
         retryable: true,
       });
+    } finally {
+      (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
+      await TurnBroker.forSocket(socketPath).close();
+    }
+  });
+
+  test("preserves a genuine outer tool error when the final browser text resembles a lockout", async () => {
+    const socketPath = brokerTestEndpoint(`cgw-real-tool-error-${process.pid}-${Date.now()}`);
+    const provider: CodexProviderConfig = {
+      adapter: "chatgpt-web",
+      baseUrl: `browser://chatgpt-real-tool-error-${Date.now()}`,
+      chatgptWeb: { brokerSocketPath: socketPath, localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    };
+    const worker = ChatGptBrowserWorker.forProvider(provider);
+    const originalRun = worker.run.bind(worker);
+    const answer = "The Codex Native2 execution layer rejected every action with a turn-token invalid, expired, or revoked error.";
+    let browserStarts = 0;
+    (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = async turn => {
+      browserStarts += 1;
+      const prepared = await turn.prepare();
+      try {
+        const token = prepared.text.match(/turn_token (turn_[A-Za-z0-9_-]+)/)?.[1];
+        if (!token) throw new Error("turn token missing from compiled prompt");
+        const claimed = await callTurnBroker<{ bindingId: string }>(socketPath, { method: "claim", token });
+        const nativeResult = await invokeAfterBrowserBoundary(turn, () => callTurnBroker<BrokerToolResult>(socketPath, {
+          method: "invoke",
+          bindingId: claimed.bindingId,
+          wireName: "exec_command",
+          freeform: false,
+          arguments: { cmd: "pwd", workdir: tempRoot },
+        }, 30_000));
+        expect(nativeResult.isError).toBe(true);
+        turn.onTextDelta(answer);
+        return answer;
+      } finally {
+        prepared.release();
+      }
+    };
+
+    const request = rawWireRequest(environmentXml);
+    const adapter = createChatGptWebAdapter(provider);
+    const firstEvents: AdapterEvent[] = [];
+    try {
+      await adapter.runTurn!(request, { headers: new Headers() }, event => firstEvents.push(event));
+      expect(browserStarts).toBe(1);
+      const call = firstEvents.find(
+        (event): event is Extract<AdapterEvent, { type: "tool_call_start" }> => event.type === "tool_call_start",
+      );
+      expect(call?.name).toBe("exec_command");
+      expect(firstEvents.at(-1)).toMatchObject({ type: "done", stopReason: "tool_use", endTurn: false });
+
+      const continuation = structuredClone(request);
+      const toolCall = {
+        role: "assistant" as const,
+        content: [{ type: "toolCall" as const, id: call!.id, name: "exec_command", arguments: { cmd: "pwd", workdir: tempRoot } }],
+        timestamp: 3,
+      };
+      const result = {
+        role: "toolResult" as const,
+        toolCallId: call!.id,
+        toolName: "exec_command",
+        content: "Native approval denied",
+        isError: true,
+        timestamp: 4,
+      };
+      continuation.context.messages.push(toolCall, result);
+      ((continuation._rawBody as { input: unknown[] }).input).push(
+        {
+          type: "function_call",
+          call_id: call!.id,
+          name: "exec_command",
+          arguments: JSON.stringify({ cmd: "pwd", workdir: tempRoot }),
+        },
+        {
+          type: "function_call_output",
+          call_id: call!.id,
+          output: result.content,
+        },
+      );
+
+      const finalEvents: AdapterEvent[] = [];
+      await adapter.runTurn!(continuation, { headers: new Headers() }, event => finalEvents.push(event));
+      expect(browserStarts).toBe(1);
+      expect(finalEvents.filter((event): event is Extract<AdapterEvent, { type: "text_delta" }> => event.type === "text_delta")
+        .map(event => event.text).join(""))
+        .toBe(answer);
+      expect(finalEvents.at(-1)).toMatchObject({ type: "done", stopReason: "stop", endTurn: true });
+      expect(finalEvents.some(event => event.type === "error")).toBe(false);
     } finally {
       (worker as unknown as { run: (turn: BrowserTurn) => Promise<string> }).run = originalRun;
       await TurnBroker.forSocket(socketPath).close();
