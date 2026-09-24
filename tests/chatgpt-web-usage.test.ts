@@ -8,6 +8,19 @@ import type { CodexParsedRequest } from "../src/types";
 
 const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 
+test("connector execution messages split large history even below the model token window", () => {
+  const caps = { ...capabilities, localToolsEnabled: true, proAvailable: false };
+  const parsed = request("");
+  parsed.context.messages = Array.from({ length: 8 }, (_, index) => ({
+    role: "user" as const, content: "word ".repeat(4_200), timestamp: index,
+  }));
+  const parts = resolveBiggerContextMultipartParts(parsed, caps);
+  expect(parts).toBeDefined();
+  const compiled = compileChatGptWebPrompt(parsed, caps, "turn_test", { experimentalMultipartParts: parts });
+  expect(compiledChatGptWebMessages(compiled).at(-1)!.length).toBeLessThanOrEqual(100_000);
+  expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records).length).toBeGreaterThanOrEqual(8);
+}, 30_000);
+
 function request(text: string): CodexParsedRequest {
   return {
     modelId: "gpt-5.6-sol",
@@ -28,7 +41,7 @@ test("multipart selection accounts for whole-record and composer fit before subm
   const plus = { ...capabilities, extraHighAvailable: false, proAvailable: false };
   for (const [contents, expected] of [
     [["small task"], undefined],
-    [[50_000, 40_000, 50_000, 5_000].map(n => "word ".repeat(n)), 6],
+    [[50_000, 40_000, 50_000, 5_000].map(n => "word ".repeat(n)), 3],
     [Array.from({ length: 3 }, () => " ".repeat(450_000)), 2],
   ] as const) {
     const parsed = request("");
@@ -79,7 +92,8 @@ test("profiled and legacy 3x context stay inline for short turns and use three p
 test("Bigger Context compaction selects six parts before the legacy inline byte budget", () => {
   const parsed = request("x".repeat(160_000));
   parsed._compactionRequest = true;
-  const parts = resolveBiggerContextMultipartParts(parsed, capabilities);
+  expect(resolveBiggerContextMultipartParts(parsed, capabilities)).toBe(3);
+  const parts = resolveBiggerContextMultipartParts(parsed, { ...capabilities, experimentalBiggerContext: true });
   expect(parts).toBe(6);
   const compiled = compileChatGptWebPrompt(parsed, capabilities, undefined, { experimentalMultipartParts: parts });
   expect(compiled.trimmedCompactionMessages).toBeUndefined();
@@ -93,7 +107,7 @@ test("multipart planning leaves room for final attachments and execution instruc
     { extraHighAvailable: true, proAvailable: true, images: 10, schema: false },
     { extraHighAvailable: false, proAvailable: false, images: 0, schema: true },
   ]) {
-    const caps = { ...capabilities, proAvailable: scenario.proAvailable };
+    const caps = { ...capabilities, proAvailable: scenario.proAvailable, experimentalBiggerContext: true };
     const parsed = request("");
     const texts = Array.from({ length: 36 }, (_, index) => `record ${index}: ${"word ".repeat(5_000)}`);
     parsed.context.messages = texts.map((content, index) => ({ role: "user", content, timestamp: index + 1 }));

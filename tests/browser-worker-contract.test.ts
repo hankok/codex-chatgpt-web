@@ -3421,7 +3421,7 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
     const inline = () => assertChatGptWebInputWithinLimits(tokens + 8_192, tokens, "gpt-5.6-sol", "high", plus, 300_000);
     const stage = () => resolveChatGptWebMultipartStagingMode("gpt-5.6-sol", plus, tokens, 300_000);
     const final = () => assertChatGptWebMultipartInputWithinLimits(
-      tokens + 10_000, tokens, "gpt-5.6-sol", "high", plus, 300_000, 6,
+      tokens + 10_000, tokens, "gpt-5.6-sol", "high", { ...plus, experimentalBiggerContext: true }, 300_000, 6,
       { stagingEffort: "medium", maxStageMessageTokens: 500, maxStageChars: 2_000, finalMessageTokens: tokens, finalMessageChars: 300_000 },
     );
     for (const preflight of [inline, stage, final]) {
@@ -3449,7 +3449,7 @@ test("Bigger Context stages use the lowest account mode that can carry the stage
     30_000,
     "gpt-5.6-sol",
     "low",
-    plus,
+    { ...plus, experimentalBiggerContext: true },
     300_000,
     6,
     {

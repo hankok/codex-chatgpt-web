@@ -82,7 +82,7 @@ export function resolveBiggerContextMultipartParts(
     ? capabilities.chatgptWebContextProfiles?.[parsed._chatgptWebRouteSlug]
     : undefined;
   const expandedContext = explicitContextProfile !== undefined || capabilities.experimentalBiggerContext === true;
-  if (parsed._compactionRequest && expandedContext) return CHATGPT_BIGGER_CONTEXT_PARTS;
+  if (parsed._compactionRequest) return expandedContext ? CHATGPT_BIGGER_CONTEXT_PARTS : CHATGPT_THREE_PART_CONTEXT_PARTS;
   const { contextWindow } = resolveChatGptWebContextLimits(
     CHATGPT_WEB_BACKEND_MODEL,
     mode.effort,
@@ -102,7 +102,7 @@ export function resolveBiggerContextMultipartParts(
     for (const [index, text] of messages.entries()) {
       const final = index === messages.length - 1;
       const effort = final ? mode.effort : stagingEffort;
-      const { browserComposerCharLimit } = resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities);
+      const { browserComposerCharLimit } = resolveChatGptWebTransportLimits(CHATGPT_WEB_BACKEND_MODEL, effort, capabilities, final && mode.localTools);
       if (browserComposerCharLimit !== undefined && text.length > browserComposerCharLimit) return false;
       const budget = resolveChatGptWebMessageTokenBudget(
         CHATGPT_WEB_BACKEND_MODEL, effort, capabilities, final ? estimateChatGptWebImageTokens(compiled) + skillFileTokens(compiled.skillFiles, parsed.modelId) : 0,

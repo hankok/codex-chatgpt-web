@@ -954,6 +954,7 @@ export function assertChatGptWebInputWithinLimits(
     modelId,
     effort,
     capabilities,
+    capabilities.localToolsEnabled,
   );
   if (
     browserComposerCharLimit !== undefined
@@ -1024,6 +1025,7 @@ export function assertChatGptWebMultipartInputWithinLimits(
       modelId,
       messageEffort,
       capabilities,
+      label === "final part" && capabilities.localToolsEnabled,
     );
     if (browserComposerCharLimit !== undefined && messageChars > browserComposerCharLimit) {
       throw new ChatGptWebAdapterError(

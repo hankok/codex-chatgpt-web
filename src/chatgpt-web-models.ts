@@ -182,9 +182,16 @@ export function resolveChatGptWebTransportLimits(
   backendModel: ChatGptWebBackendModel,
   effort: ChatGptWebAdapterEffort,
   capabilities: ChatGptWebAccountCapabilities,
+  connectorExecution = false,
 ): ChatGptWebTransportLimits {
   if (isChatGptWebZeroRiskBackendModel(backendModel)) return {};
   if (backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) return {};
+  if (connectorExecution) {
+    // Conservative execution-message cap: connector submissions failed at 167,808 chars
+    // despite fitting the plain-chat budget. Inert staging messages keep their own limits.
+    const limits = resolveChatGptWebTransportLimits(backendModel, effort, capabilities);
+    return { ...limits, browserComposerCharLimit: Math.min(limits.browserComposerCharLimit ?? Infinity, 100_000) };
+  }
   if (!capabilities.proAvailable) {
     if (effort === "low") {
       return { browserComposerCharLimit: CHATGPT_WEB_INSTANT_COMPOSER_CHAR_LIMIT };

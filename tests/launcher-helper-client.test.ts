@@ -23,6 +23,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
     ChatGptBrowserWorker.prototype.run = async function(turn) {
       if (this.config.useSavedChats !== true) throw new Error("Saved chat preference lost in helper IPC");
       if (turn.modelFamily !== "5.6") throw new Error("Pinned model family lost in helper IPC");
+      if (turn.contextRouteSlug !== "chatgpt-web/gpt-5.6-sol") throw new Error("Context profile route lost in helper IPC");
       await turn.onPreparedSelected(false);
       const prepared = await turn.prepare();
       if (prepared.skillFiles?.[0]?.text !== "<skill>\\n<name>ipc</name>\\n<path>/skills/ipc/SKILL.md</path>\\ncheck IPC\\n</skill>") throw new Error("Skill file lost in IPC");
@@ -93,6 +94,7 @@ test("daemon streams browser lifecycle through the real helper process", async (
   try {
     const result = await client.run({
       traceId: "abcdef123456",
+      contextRouteSlug: "chatgpt-web/gpt-5.6-sol",
       modelId: "gpt-5.6-sol",
       reasoning: "high",
       modelFamily: "5.6",

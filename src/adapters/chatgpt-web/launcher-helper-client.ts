@@ -283,6 +283,7 @@ export class LauncherBrowserHelperClient {
             traceId: turn.traceId,
             modelId: turn.modelId,
             reasoning: turn.reasoning,
+            contextRouteSlug: turn.contextRouteSlug,
             ...(turn.modelFamily ? { modelFamily: turn.modelFamily } : {}),
             capabilities: turn.capabilities,
             ...(turn.nativeConnector ? { nativeConnector: true } : {}),

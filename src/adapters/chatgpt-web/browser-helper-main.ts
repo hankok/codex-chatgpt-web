@@ -26,6 +26,7 @@ interface RunMessage {
     traceId: string;
     modelId: string;
     reasoning?: string;
+    contextRouteSlug?: string;
     modelFamily?: "5.6" | "6";
     capabilities: ChatGptWebCapabilities;
     nativeConnector?: boolean;
@@ -220,6 +221,7 @@ async function run(message: RunMessage): Promise<void> {
     traceId: message.turn.traceId,
     modelId: message.turn.modelId,
     reasoning: message.turn.reasoning,
+    contextRouteSlug: message.turn.contextRouteSlug,
     ...(message.turn.modelFamily ? { modelFamily: message.turn.modelFamily } : {}),
     capabilities: message.turn.capabilities,
     ...(message.turn.nativeConnector ? { nativeConnector: true } : {}),
