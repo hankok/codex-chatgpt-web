@@ -135,6 +135,9 @@ export const CHATGPT_COMPLETION_ACTION_GRACE_MS = 60_000;
 export const CHATGPT_COMPLETION_SETTLE_MS = 2_000;
 export const CHATGPT_TOOL_CONFIRMATION_TIMEOUT_MS = 60_000;
 export const MAX_CHATGPT_CONNECTOR_TRIGGER_ATTEMPTS = 3;
+// A large inline context is still one browser message. Its Send acknowledgement can take the
+// same amount of time as a multipart stage, especially on the Windows Electron renderer.
+export const CHATGPT_CONTEXT_UPLOAD_TIMEOUT_MS = 1_200_000;
 const CHATGPT_CONNECTOR_MENTION_QUERY = "@codex";
 const CHATGPT_CONNECTOR_ACTION_TIMEOUT_MS = 60_000;
 const CHATGPT_SMOKE_TEXT = "Reply with exactly: CODEX WEB GPT READY";
@@ -1119,10 +1122,10 @@ export const browserStageTimeouts = {
   effortSelection: 120_000,
   promptAttachment: 60_000,
   fileAttachment: 120_000,
-  send: 20_000,
-  // A Bigger Context stage posts a much larger payload onto a conversation that already holds the
-  // earlier parts. This budget covers ChatGPT accepting the submission, not just the click.
-  multipartStageSend: 1_200_000,
+  // Both a one-message context and a multipart stage can spend this budget before ChatGPT
+  // exposes submission evidence. It covers accepting the browser upload, not model completion.
+  send: CHATGPT_CONTEXT_UPLOAD_TIMEOUT_MS,
+  multipartStageSend: CHATGPT_CONTEXT_UPLOAD_TIMEOUT_MS,
   // Staging asks for one transaction-bound acknowledgement, not an open-ended model answer.
   multipartStageAcknowledgement: CHATGPT_MULTIPART_RESPONSE_DOM_GRACE_MS,
 } as const;
@@ -3620,8 +3623,8 @@ export class ChatGptBrowserWorker {
       noWaitAfter: true,
       signal: abortSignal,
       // runStage owns the operation budget. A second Locator timeout would silently collapse the
-      // 180-second Bigger Context budget back to the ordinary 20 seconds after Enter has already
-      // submitted the message; semantic submission evidence below remains the authority.
+      // long context-upload budget after Enter has already submitted the message; semantic
+      // submission evidence below remains the authority.
       timeout: 0,
     });
     const evidence = await this.waitForSubmissionAcceptedWithRecovery(
