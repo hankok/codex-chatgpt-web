@@ -2255,10 +2255,10 @@ function DoctorSummary({ copy, language, report }: { copy: Copy; language: Langu
       <div>
         {visibleChecks.map((check) => (
           <p key={check.id}>
-            <StateDot state={check.status === "ok" ? "ready" : check.status === "warning" ? "busy" : "error"} />
+            <StateDot state={check.status === "info" ? "idle" : check.status === "ok" ? "ready" : check.status === "warning" ? "busy" : "error"} />
             <span>{check.status === "ok"
               ? localizeRuntimeMessage(copy, check.message, check.id, language)
-              : check.message}</span>
+              : check.message}{check.status === "info" && check.detail ? ` — ${check.detail}` : ""}</span>
           </p>
         ))}
       </div>

@@ -78,7 +78,7 @@ export interface LogRecord {
 
 export interface DoctorCheck {
   id: string;
-  status: "ok" | "warning" | "error";
+  status: "ok" | "info" | "warning" | "error";
   message: string;
   detail?: string;
 }

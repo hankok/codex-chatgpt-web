@@ -709,7 +709,7 @@ function registerIpc({ logger, stateStore }) {
       send("launcher:state-changed", state);
       const successMessage = IS_DEV_PROFILE
         ? "DEV harness and connector verified"
-        : "Runtime and connector verified";
+        : "Local runtime healthy; ChatGPT connector selectable. End-to-end tool execution was not tested.";
       publishOperation({ name: operationName, status: "completed", message: successMessage });
       return {
         ...report,

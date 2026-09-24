@@ -14,7 +14,7 @@ import {
 } from "./launcher-browser-host";
 import { processRunning } from "./process";
 
-export type CheckStatus = "ok" | "warning" | "error";
+export type CheckStatus = "ok" | "info" | "warning" | "error";
 
 export interface DoctorCheck {
   id: string;
@@ -211,9 +211,9 @@ export async function runDoctor(): Promise<DoctorReport> {
       : { id: "tunnel-runtime", status: "error", message: "Tunnel runtime is not ready", detail: runtime.detail });
     checks.push({
       id: "connector",
-      status: "warning",
-      message: `Local checks cannot prove that ChatGPT connector ${JSON.stringify(config.appName)} is attached to this tunnel`,
-      detail: "Verify it once at https://chatgpt.com/#settings/Plugins while the tunnel is ready.",
+      status: "info",
+      message: `ChatGPT connector ${JSON.stringify(config.appName)}: end-to-end tool access has not been tested by Doctor`,
+      detail: "Verify runtime checks local services and connector selection in ChatGPT. It does not execute a workspace tool through the tunnel; successful tool results in a task provide that evidence.",
     });
   } else {
     checks.push({ id: "tools", status: "warning", message: "Browser-only mode intentionally has no local tools or MCP tunnel" });
@@ -227,7 +227,7 @@ export async function runDoctor(): Promise<DoctorReport> {
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
-  const icon: Record<CheckStatus, string> = { ok: "✓", warning: "!", error: "✗" };
+  const icon: Record<CheckStatus, string> = { ok: "✓", info: "i", warning: "!", error: "✗" };
   const lines = report.checks.flatMap(check => [
     `${icon[check.status]} ${check.message}`,
     ...(check.detail ? [`  ${check.detail}`] : []),

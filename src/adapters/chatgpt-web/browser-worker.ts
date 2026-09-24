@@ -839,8 +839,8 @@ export class ChatGptSubmissionRejectionObserver {
     this.checks.push(withChatGptBrowserObservationTimeout(response.json(), 3_000)
       .then(body => body?.detail?.code === "message_length_exceeds_limit"
         ? new ChatGptWebAdapterError(
-          "ChatGPT rejected this message because it exceeds the selected mode's input-size limit. Compact the task before retrying.",
-          { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },
+          "ChatGPT rejected an upload message as too long. This is a per-message upload limit, not exhaustion of the selected model context window.",
+          { status: 400, errorType: "invalid_request_error", code: "chatgpt_message_too_large", retryable: false },
         ) : undefined)
       // Unreadable or unfamiliar responses do not establish a size rejection. The normal
       // bound-response DOM error remains authoritative in that case.
@@ -1389,13 +1389,14 @@ export function chatGptSubmissionEvidence(state: {
 
 export type ChatGptConnectorAttachmentMode = "none" | "mention" | "retained";
 
-/** A launcher lease may reuse a connector only after proving that exact retained surface is bound. */
+/** Conversation history does not prove tool attachment for the next submitted message. */
 export function chatGptConnectorAttachmentMode(
   localTools: boolean,
   reuseConversation: boolean,
 ): ChatGptConnectorAttachmentMode {
   if (!localTools) return "none";
-  return reuseConversation ? "retained" : "mention";
+  void reuseConversation;
+  return "mention";
 }
 
 export async function setChatGptThinkMode(
@@ -4635,6 +4636,17 @@ export class ChatGptBrowserWorker {
       const estimatedInputTokens = estimateCompiledChatGptWebInputTokens(prepared, turn.modelId);
       const estimatedMessageTokens = estimateCompiledChatGptWebMessageTokens(prepared, turn.modelId);
       const maxMessageChars = compiledChatGptWebMaxMessageChars(prepared);
+      const automaticMessageLimit = turn.modelId === CHATGPT_WEB_MODEL_ID
+        ? resolveChatGptWebTransportLimits(
+          CHATGPT_WEB_MODEL_ID, requestedMode.effort, browserCapabilities, true,
+        ).browserComposerCharLimit
+        : undefined;
+      if (automaticMessageLimit !== undefined && maxMessageChars > automaticMessageLimit) {
+        throw new ChatGptWebAdapterError(
+          `An upload part still contains ${maxMessageChars.toLocaleString("en-US")} characters after partitioning (safe upload limit: ${automaticMessageLimit.toLocaleString("en-US")}). A single large history record or the selected number of parts prevents a safe upload. This does not mean the model context window is full.`,
+          { status: 400, errorType: "invalid_request_error", code: "chatgpt_message_too_large", retryable: false },
+        );
+      }
       const maxStageMessageTokens = multipartStages
         ? Math.max(...multipartStages.map(stage => estimateTokens(stage.text, turn.modelId)))
         : undefined;

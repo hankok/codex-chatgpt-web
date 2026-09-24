@@ -8,6 +8,21 @@ import type { CodexParsedRequest } from "../src/types";
 
 const capabilities = { localToolsEnabled: false, solAvailable: true, extraHighAvailable: true, proAvailable: true };
 
+test("expanded context bounds inert uploads as well as the final connector message", () => {
+  const caps = { ...capabilities, proAvailable: false, localToolsEnabled: true,
+    chatgptWebContextProfiles: { "chatgpt-web/gpt-5.6-sol": "1m" as const } };
+  const parsed = request("");
+  parsed._chatgptWebRouteSlug = "chatgpt-web/gpt-5.6-sol";
+  parsed.context.messages = Array.from({ length: 24 }, (_, index) => ({
+    role: "user" as const, content: "word ".repeat(3_000), timestamp: index,
+  }));
+  const parts = resolveBiggerContextMultipartParts(parsed, caps);
+  const compiled = compileChatGptWebPrompt(parsed, caps, "turn_test", { experimentalMultipartParts: parts });
+  expect(parts).toBe(6);
+  expect(compiledChatGptWebMessages(compiled).every(message => message.length <= 100_000)).toBe(true);
+  expect(compiled.multipart!.parts.flatMap(part => JSON.parse(part).records).length).toBe(24);
+}, 30_000);
+
 test("connector execution messages split large history even below the model token window", () => {
   const caps = { ...capabilities, localToolsEnabled: true, proAvailable: false };
   const parsed = request("");
@@ -42,7 +57,7 @@ test("multipart selection accounts for whole-record and composer fit before subm
   for (const [contents, expected] of [
     [["small task"], undefined],
     [[50_000, 40_000, 50_000, 5_000].map(n => "word ".repeat(n)), 3],
-    [Array.from({ length: 3 }, () => " ".repeat(450_000)), 2],
+    [Array.from({ length: 3 }, () => " ".repeat(450_000)), 3],
   ] as const) {
     const parsed = request("");
     parsed.context.messages = contents.map((content, index) => ({ role: "user", content, timestamp: index + 1 }));
@@ -54,21 +69,21 @@ test("multipart selection accounts for whole-record and composer fit before subm
         .toEqual([...contents]);
     }
   }
-  // Low-token text can still exceed the reasoning model's server character ceiling.
-  // Stage the complete record instead of sending it inline or dropping its contents.
+  // An oversized atomic record remains intact for the preflight error; never silently truncate it.
   const sparsePro = request("x".repeat(600_000));
-  expect(resolveBiggerContextMultipartParts(sparsePro, capabilities)).toBe(2);
-  const stagedPro = compileChatGptWebPrompt(sparsePro, capabilities, undefined, { experimentalMultipartParts: 2 });
+  expect(resolveBiggerContextMultipartParts(sparsePro, capabilities)).toBe(3);
+  const stagedPro = compileChatGptWebPrompt(sparsePro, capabilities, undefined, { experimentalMultipartParts: 3 });
   expect(stagedPro.multipart!.parts.flatMap(part => JSON.parse(part).records).map(record => record.message.content))
     .toEqual([sparsePro.context.messages[0]!.content]);
   const proMessages = compiledChatGptWebMessages(stagedPro);
+  expect(Math.max(...proMessages.map(message => message.length))).toBeGreaterThan(100_000);
   expect(proMessages[1]!.length).toBeLessThanOrEqual(500_000);
   expect(resolveChatGptWebMultipartStagingMode(
     "gpt-5.6-sol", capabilities, estimateTokens(proMessages[0]!), proMessages[0]!.length,
   ).effort).toBe("max");
 }, 60_000);
 
-test("profiled and legacy 3x context stay inline for short turns and use three parts when needed", () => {
+test("profiled short turns stay inline and oversized legacy records reach multipart preflight", () => {
   const plus = { ...capabilities, extraHighAvailable: false, proAvailable: false };
   const short = request("continue");
   (short as any)._chatgptWebRouteSlug = "chatgpt-web/gpt-5.6-sol";
@@ -86,7 +101,7 @@ test("profiled and legacy 3x context stay inline for short turns and use three p
   expect(resolveBiggerContextMultipartParts(large, {
     ...plus,
     experimentalBiggerContext: true,
-  })).toBe(3);
+  })).toBe(6);
 }, 30_000);
 
 test("Bigger Context compaction selects six parts before the legacy inline byte budget", () => {
@@ -109,14 +124,14 @@ test("multipart planning leaves room for final attachments and execution instruc
   ]) {
     const caps = { ...capabilities, proAvailable: scenario.proAvailable, experimentalBiggerContext: true };
     const parsed = request("");
-    const texts = Array.from({ length: 36 }, (_, index) => `record ${index}: ${"word ".repeat(5_000)}`);
+    const texts = Array.from({ length: 18 }, (_, index) => `record ${index}: ${"word ".repeat(5_000)}`);
     parsed.context.messages = texts.map((content, index) => ({ role: "user", content, timestamp: index + 1 }));
     const images = Array.from({ length: scenario.images }, (_, index) => ({
       type: "image" as const, imageUrl: `data:image/png;base64,partition-image-${index}`, detail: "original" as const,
     }));
     if (images.length) parsed.context.messages.push({ role: "user", content: images, timestamp: 37 });
     if (scenario.schema) parsed.options.outputFormat = {
-      type: "json_schema", name: "result", strict: true, schema: { type: "string", description: "schema ".repeat(24_000) },
+      type: "json_schema", name: "result", strict: true, schema: { type: "string", description: "schema ".repeat(8_000) },
     };
     const compiled = compileChatGptWebPrompt(parsed, caps, undefined, { experimentalMultipartParts: 6 });
     const records = compiled.multipart!.parts.flatMap(part => JSON.parse(part).records);
