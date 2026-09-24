@@ -36,7 +36,7 @@ Resolve the profile while the original Web route slug is still available. Use th
 
 For Default, use the existing route- and capability-specific `resolveChatGptWebContextLimits` result. For an explicit profile, set the generated Web row's `context_window` and `max_context_window` to the selected token count, and derive `auto_compact_token_limit` by preserving the route's existing compaction-to-window ratio. Recompute the effective context percentage from those values.
 
-For automatic Sol routes, the selected total window also governs aggregate input preflight. If one message cannot fit, retain the existing planner's two- or six-part behavior, with six as the maximum. Every staged message and final message must still pass the existing measured composer-character, visible-message-token, image, and attachment limits. Never split an individual Codex message or JSON record to bypass those limits. Luna keeps its rolling-checkpoint path and separate measured per-turn browser transport limit; a context profile does not enable multipart there.
+For automatic Sol routes, the selected total window also governs aggregate input preflight. Use the smallest one-, two-, three-, or six-part plan that fits, with six as the maximum. Every staged message and final message must still pass the existing measured composer-character, visible-message-token, image, and attachment limits. Never split an individual Codex message or JSON record to bypass those limits. Luna keeps its rolling-checkpoint path and separate measured per-turn browser transport limit; a context profile does not enable multipart there.
 
 Native Codex model entries must be identical before and after changing a Web profile, using the same upstream catalog and same pre-existing native context override. No Web profile may change a native model's `context_window`, `max_context_window`, compaction limit, or Codex configuration.
 
@@ -50,7 +50,7 @@ If ChatGPT rejects a submitted high-profile request with a length error or HTTP 
 
 - Configuration tests cover absent-map compatibility, valid per-route values, malformed keys or values, and preservation of the legacy Default behavior.
 - Model-catalog tests verify each Web route's Default/512K/1M fields and compaction ratio. They compare native model entries before and after profile changes under identical existing native override inputs.
-- Adapter tests verify aggregate acceptance up to the selected local budget, rejection above it before browser submission, per-message limits in two/six-part plans, and that Luna and Zero Risk never gain multipart support.
+- Adapter tests verify aggregate acceptance up to the selected local budget, rejection above it before browser submission, per-message limits in two/three/six-part plans, and that Luna and Zero Risk never gain multipart support.
 - Launcher tests verify the available route list, displayed current Default values, per-model selection persistence, IPC validation, and restart/catalog-refresh state.
 - Run focused tests, type checks, launcher build, and package validation. Automated tests can establish local metadata, preflight, and segmentation behavior; they cannot certify ChatGPT's acceptance of 512K or 1M aggregate input. Keep both larger profiles labeled experimental until separately validated against the target Web routes.
 

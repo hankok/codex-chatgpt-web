@@ -161,8 +161,15 @@ export function resolveChatGptWebContextLimits(
   } else {
     throw new Error(`ChatGPT Plus context limit is not defined for unavailable effort: ${effort}`);
   }
+  if (backendModel === CHATGPT_WEB_LUNA_BACKEND_MODEL) return limits;
   const profile = modelSlug ? capabilities.chatgptWebContextProfiles?.[modelSlug] : undefined;
-  if (!profile) return limits;
+  if (!profile) {
+    if (!capabilities.experimentalBiggerContext) return limits;
+    return contextLimits(
+      limits.contextWindow * CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
+      limits.autoCompactTokenLimit * CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER,
+    );
+  }
   const contextWindow = profile === "512k" ? 512_000 : 1_000_000;
   return contextLimits(
     contextWindow,

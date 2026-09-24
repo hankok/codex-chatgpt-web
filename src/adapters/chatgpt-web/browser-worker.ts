@@ -994,7 +994,7 @@ export function assertChatGptWebMultipartInputWithinLimits(
   contextRouteSlug?: string,
 ): void {
   if (!isChatGptWebMultipartPartCount(partCount)) {
-    throw new Error("Bigger Context requires two or six context parts");
+    throw new Error("Bigger Context requires two, three, or six context parts");
   }
   if (modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new ChatGptWebAdapterError(
@@ -1072,7 +1072,7 @@ export function assertChatGptWebMultipartInputWithinLimits(
     ).contextWindow
     : baseContextWindow * Math.min(partCount, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
   if (estimatedInputTokens < experimentalContextWindow) return;
-  const partLabel = partCount === 2 ? "two-part" : "six-part";
+  const partLabel = partCount === 2 ? "two-part" : partCount === 3 ? "three-part" : "six-part";
   throw new ChatGptWebAdapterError(
     `This Bigger Context transaction is estimated at ${estimatedInputTokens.toLocaleString("en-US")} input tokens, which exceeds its experimental ${experimentalContextWindow.toLocaleString("en-US")}-token ${partLabel} ceiling. Run /compact, then retry.`,
     { status: 400, errorType: "invalid_request_error", code: "context_length_exceeded", retryable: false },

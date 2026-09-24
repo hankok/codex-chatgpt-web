@@ -217,11 +217,13 @@ test("Bigger Context sends six semantic record envelopes and starts work from th
   expect(commit.match(new RegExp(token, "g"))).toHaveLength(1);
 });
 
-test("Bigger Context uses the minimum transport and reserves six parts for compaction", () => {
+test("Bigger Context uses the minimum one, two, three, or six-part transport and reserves six parts for compaction", () => {
   expect(biggerContextPartCount(94_999, 95_000, false)).toBeUndefined();
   expect(biggerContextPartCount(95_000, 95_000, false)).toBe(2);
   expect(biggerContextPartCount(189_999, 95_000, false)).toBe(2);
-  expect(biggerContextPartCount(190_000, 95_000, false)).toBe(6);
+  expect(biggerContextPartCount(190_000, 95_000, false)).toBe(3);
+  expect(biggerContextPartCount(284_999, 95_000, false)).toBe(3);
+  expect(biggerContextPartCount(285_000, 95_000, false)).toBe(6);
   expect(biggerContextPartCount(1, 95_000, true)).toBe(6);
 
   const compiled = compileChatGptWebPrompt(
@@ -241,6 +243,16 @@ test("Bigger Context uses the minimum transport and reserves six parts for compa
   ]);
   expect(formatChatGptWebMultipartCommit(compiled.multipart!, transactionId))
     .toContain("acknowledged_parts: 1/2");
+
+  const threePart = compileChatGptWebPrompt(
+    request("high"),
+    { localToolsEnabled: false, solAvailable: true, extraHighAvailable: false, proAvailable: false },
+    undefined,
+    { experimentalMultipartParts: 3 },
+  );
+  expect(threePart.multipart?.parts).toHaveLength(3);
+  expect(formatChatGptWebMultipartCommit(threePart.multipart!, transactionId))
+    .toContain("acknowledged_parts: 2/3");
 });
 
 test("browser-only Medium directs users to the full harness", () => {

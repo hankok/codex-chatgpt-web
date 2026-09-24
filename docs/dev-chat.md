@@ -108,7 +108,8 @@ The DEV CLI reads the same setting from its isolated runtime configuration on ea
 
 When enabled, a normal turn stays on the original single-message path while its estimated input
 is below the selected mode's existing auto-compaction threshold. At the first threshold it uses two
-messages; at twice that threshold it uses six messages. The final context part also commits the
+messages; at twice that threshold it uses three messages, with six reserved for larger payloads or
+compaction. The final context part also commits the
 transaction and starts the task, so there is no extra request. The existing DEV compaction threshold
 remains three times the selected mode's base limit.
 

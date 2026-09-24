@@ -308,7 +308,7 @@ export interface CodexProviderConfig {
     proAvailable?: boolean;
     /** Authorize per-call "Allow once" confirmation clicks for this connector. */
     autoApproveToolCalls?: boolean;
-    /** Experimental transport: adapt one context across one, two, or six ChatGPT messages. */
+    /** Experimental transport: adapt one context across one, two, three, or six ChatGPT messages. */
     experimentalBiggerContext?: boolean;
     chatgptWebContextProfiles?: Partial<Record<string, "512k" | "1m">>;
     experimentalSkillAttachments?: boolean;

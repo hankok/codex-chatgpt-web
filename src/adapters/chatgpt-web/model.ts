@@ -12,6 +12,7 @@ export interface ChatGptWebCapabilities {
   solAvailable: boolean;
   extraHighAvailable: boolean;
   proAvailable: boolean;
+  experimentalBiggerContext?: boolean;
   chatgptWebContextProfiles?: ChatGptWebContextProfiles;
 }
 

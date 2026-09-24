@@ -46,11 +46,12 @@ export interface CompileChatGptWebPromptOptions {
 }
 
 export const CHATGPT_BIGGER_CONTEXT_PARTS = 6 as const;
-export type ChatGptWebMultipartPartCount = 2 | typeof CHATGPT_BIGGER_CONTEXT_PARTS;
+export const CHATGPT_THREE_PART_CONTEXT_PARTS = 3 as const;
+export type ChatGptWebMultipartPartCount = 2 | typeof CHATGPT_THREE_PART_CONTEXT_PARTS | typeof CHATGPT_BIGGER_CONTEXT_PARTS;
 export type ChatGptWebMultipartParts = readonly string[];
 
 export function isChatGptWebMultipartPartCount(value: number): value is ChatGptWebMultipartPartCount {
-  return value === 2 || value === CHATGPT_BIGGER_CONTEXT_PARTS;
+  return value === 2 || value === CHATGPT_THREE_PART_CONTEXT_PARTS || value === CHATGPT_BIGGER_CONTEXT_PARTS;
 }
 
 export interface ChatGptWebMultipartPrompt {
@@ -120,7 +121,7 @@ export function formatChatGptWebMultipartCommit(
   assertMultipartTransactionId(transactionId);
   const totalParts = multipart.parts.length;
   if (!isChatGptWebMultipartPartCount(totalParts)) {
-    throw new Error("ChatGPT multipart commit requires two or six context parts");
+    throw new Error("ChatGPT multipart commit requires two, three, or six context parts");
   }
   const manifest = multipart.parts.map((payload, index) => (
     `${index + 1}/${totalParts}:${createHash("sha256").update(payload).digest("hex")}`
@@ -459,7 +460,7 @@ export function compileChatGptWebPrompt(
     }
   }
   if (multipartParts !== undefined && !isChatGptWebMultipartPartCount(multipartParts)) {
-    throw new Error("Bigger Context requires two or six context parts");
+    throw new Error("Bigger Context requires two, three, or six context parts");
   }
   if (multipartEnabled && parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error("Bigger Context is unavailable for Luna because its accumulated browser transcript still shares one 28,000-token transport budget");

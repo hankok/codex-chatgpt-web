@@ -374,6 +374,7 @@ export function createChatGptWebAdapter(
     solAvailable: provider.chatgptWeb?.solAvailable !== false,
     extraHighAvailable: provider.chatgptWeb?.extraHighAvailable === true,
     proAvailable: provider.chatgptWeb?.proAvailable === true,
+    experimentalBiggerContext: experimentalBiggerContext === true,
     chatgptWebContextProfiles,
   };
   const manualInteraction = provider.chatgptWeb?.browserInteractionMode === "manual";
@@ -419,7 +420,7 @@ export function createChatGptWebAdapter(
   const multipartEnabledFor = (input: CodexParsedRequest): boolean => (
     input.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
     && !isChatGptWebZeroRiskBackendModel(input.modelId)
-    && explicitContextProfileFor(input) !== undefined
+    && (explicitContextProfileFor(input) !== undefined || experimentalBiggerContext === true)
   );
 
   const startRuntime = (

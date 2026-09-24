@@ -100,15 +100,15 @@ describe("native /models augmentation", () => {
     }, { ...config, proAvailable: false })).toThrow("Cannot group different context budgets");
   });
 
-  test("legacy Bigger Context does not change Default Web model catalog limits", () => {
+  test("legacy Bigger Context remains the Default Web model catalog baseline", () => {
     const config = defaultConfig("full");
     config.extraHighAvailable = true;
     config.proAvailable = true;
     config.experimentalBiggerContext = true;
     const models = augmentNativeModelCatalog(source(), config).models as Array<Record<string, unknown>>;
     const pro = models.find(model => model.slug === "chatgpt-web/pro")!;
-    expect(pro.context_window).toBe(112_193);
-    expect(pro.auto_compact_token_limit).toBe(95_000);
+    expect(pro.context_window).toBe(336_579);
+    expect(pro.auto_compact_token_limit).toBe(285_000);
   });
 
   test("applies explicit Web profiles per route without changing native rows", () => {

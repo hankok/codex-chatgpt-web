@@ -12,6 +12,7 @@ import type { CodexParsedRequest, CodexUsage } from "../../types";
 import { compiledChatGptWebMessages, estimateChatGptWebImageTokens, estimateCompiledChatGptWebInputTokens } from "./input-tokens";
 import {
   CHATGPT_BIGGER_CONTEXT_PARTS,
+  CHATGPT_THREE_PART_CONTEXT_PARTS,
   compileChatGptWebPrompt,
   type ChatGptWebMultipartPartCount,
   type CompiledChatGptWebPrompt,
@@ -76,16 +77,12 @@ export function resolveBiggerContextMultipartParts(
   if (parsed.modelId === CHATGPT_WEB_LUNA_MODEL_ID) {
     throw new Error("Bigger Context is unavailable for Luna because its accumulated browser transcript still shares one 28,000-token transport budget");
   }
-  if (parsed._chatgptWebRouteSlug
-    && capabilities.chatgptWebContextProfiles?.[parsed._chatgptWebRouteSlug]) {
-    return CHATGPT_BIGGER_CONTEXT_PARTS;
-  }
   const mode = resolveChatGptWebModelMode(parsed.modelId, parsed.options.reasoning, capabilities);
   if (parsed._compactionRequest) return CHATGPT_BIGGER_CONTEXT_PARTS;
-  const { contextWindow, autoCompactTokenLimit } = resolveChatGptWebContextLimits(
+  const { contextWindow } = resolveChatGptWebContextLimits(
     CHATGPT_WEB_BACKEND_MODEL,
     mode.effort,
-    { ...capabilities, experimentalBiggerContext: false },
+    capabilities,
     parsed._chatgptWebRouteSlug,
   );
   const compile = (parts?: ChatGptWebMultipartPartCount): CompiledChatGptWebPrompt => compileChatGptWebPrompt(
@@ -93,10 +90,6 @@ export function resolveBiggerContextMultipartParts(
     { experimentalMultipartParts: parts, experimentalSkillAttachments },
   );
   const inline = compile();
-  const inputTokens = estimateCompiledChatGptWebInputTokens(inline, parsed.modelId);
-  const initialParts = biggerContextPartCount(inputTokens, autoCompactTokenLimit, false);
-  if (initialParts === CHATGPT_BIGGER_CONTEXT_PARTS) return initialParts;
-
   const fits = (compiled: CompiledChatGptWebPrompt): boolean => {
     const messages = compiledChatGptWebMessages(compiled);
     // Inert stages may use any explicitly available staging effort; execution keeps the chosen
@@ -113,10 +106,15 @@ export function resolveBiggerContextMultipartParts(
       if (estimateTokens(text, parsed.modelId) > budget) return false;
     }
     return estimateCompiledChatGptWebInputTokens(compiled, parsed.modelId)
-      < contextWindow * Math.min(messages.length, CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER);
+      < contextWindow;
   };
-  if (initialParts === undefined && fits(inline)) return undefined;
-  return fits(compile(2)) ? 2 : CHATGPT_BIGGER_CONTEXT_PARTS;
+  if (fits(inline)) return undefined;
+  for (const parts of [2, CHATGPT_THREE_PART_CONTEXT_PARTS, CHATGPT_BIGGER_CONTEXT_PARTS] as const) {
+    if (fits(compile(parts))) return parts;
+  }
+  // Six is the protocol maximum. Returning it lets the browser preflight produce the precise
+  // aggregate or atomic-record error instead of hiding the selected profile behind the planner.
+  return CHATGPT_BIGGER_CONTEXT_PARTS;
 }
 
 export function biggerContextPartCount(
@@ -127,6 +125,9 @@ export function biggerContextPartCount(
   if (compaction) return CHATGPT_BIGGER_CONTEXT_PARTS;
   if (inputTokens < onePartLimit) return undefined;
   if (inputTokens < onePartLimit * 2) return 2;
+  if (inputTokens < onePartLimit * CHATGPT_WEB_BIGGER_CONTEXT_MULTIPLIER) {
+    return CHATGPT_THREE_PART_CONTEXT_PARTS;
+  }
   return CHATGPT_BIGGER_CONTEXT_PARTS;
 }
 
@@ -156,9 +157,12 @@ export function estimateChatGptWebUsage(
   const explicitContextProfile = parsed._chatgptWebRouteSlug
     ? capabilities.chatgptWebContextProfiles?.[parsed._chatgptWebRouteSlug]
     : undefined;
+  const multipartEnabled = parsed.modelId !== CHATGPT_WEB_LUNA_MODEL_ID
+    && !isChatGptWebZeroRiskBackendModel(parsed.modelId)
+    && (explicitContextProfile !== undefined || _experimentalBiggerContext);
   const inputTokens = estimateChatGptWebInputTokens(parsed, capabilities, {
     experimentalSkillAttachments,
-    experimentalMultipartParts: explicitContextProfile
+    experimentalMultipartParts: multipartEnabled
       ? resolveBiggerContextMultipartParts(parsed, capabilities, experimentalSkillAttachments)
       : undefined,
   });

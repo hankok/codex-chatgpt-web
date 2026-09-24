@@ -238,14 +238,14 @@ describe("fixed ChatGPT Web model routes", () => {
     expect(selected1m.contextWindow).toBe(1_000_000);
   });
 
-  test("legacy Bigger Context no longer changes route limits without an explicit profile", () => {
+  test("legacy Bigger Context remains the Default compatibility baseline", () => {
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_BACKEND_MODEL, "max", {
       ...pro,
       experimentalBiggerContext: true,
     })).toEqual({
-      contextWindow: 112_193,
+      contextWindow: 336_579,
       effectiveContextWindowPercent: 85,
-      autoCompactTokenLimit: 95_000,
+      autoCompactTokenLimit: 285_000,
     });
     expect(resolveChatGptWebContextLimits(CHATGPT_WEB_LUNA_BACKEND_MODEL, "low", {
       solAvailable: false,

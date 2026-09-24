@@ -1448,14 +1448,14 @@ describe("ChatGPT outer-native harness v4", () => {
     }
   });
 
-  test("six-part multipart is enabled only by an explicit per-route context profile", async () => {
+  test("short turns stay inline for both legacy 3x and explicit per-route context profiles", async () => {
     for (const scenario of [
       { name: "default", legacyBigger: true, profiles: {}, expectedParts: undefined },
       {
         name: "512k",
         legacyBigger: false,
         profiles: { "chatgpt-web/gpt-5.6-sol": "512k" as const },
-        expectedParts: 6,
+        expectedParts: undefined,
       },
     ]) {
       const socketPath = brokerTestEndpoint(`cgw-context-profile-multipart-${scenario.name}-${process.pid}-${Date.now()}`);

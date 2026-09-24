@@ -55,6 +55,27 @@ test("multipart selection accounts for whole-record and composer fit before subm
   ).effort).toBe("max");
 }, 60_000);
 
+test("profiled and legacy 3x context stay inline for short turns and use three parts when needed", () => {
+  const plus = { ...capabilities, extraHighAvailable: false, proAvailable: false };
+  const short = request("continue");
+  (short as any)._chatgptWebRouteSlug = "chatgpt-web/gpt-5.6-sol";
+  expect(resolveBiggerContextMultipartParts(short, {
+    ...plus,
+    chatgptWebContextProfiles: { "chatgpt-web/gpt-5.6-sol": "512k" },
+  })).toBeUndefined();
+
+  const large = request("");
+  large.context.messages = Array.from({ length: 3 }, (_, index) => ({
+    role: "user" as const,
+    content: "word ".repeat(45_000),
+    timestamp: index + 1,
+  }));
+  expect(resolveBiggerContextMultipartParts(large, {
+    ...plus,
+    experimentalBiggerContext: true,
+  })).toBe(3);
+}, 30_000);
+
 test("Bigger Context compaction selects six parts before the legacy inline byte budget", () => {
   const parsed = request("x".repeat(160_000));
   parsed._compactionRequest = true;
