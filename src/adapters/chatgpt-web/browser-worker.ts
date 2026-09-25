@@ -818,6 +818,18 @@ const chatGptTerminalErrorAlert = (scope: ChatGptTextScope): Locator => scope
   .getByText(/Something went wrong[\s\S]*help\.openai\.com/i)
   .last();
 
+const chatGptModelCapacityAlert = (scope: ChatGptTextScope): Locator => scope
+  .getByText(/Selected model is at capacity|at capacity[\s\S]*different model|please try a different model/i)
+  .last();
+
+export function chatGptModelCapacityError(): ChatGptWebAdapterError {
+  return new ChatGptWebAdapterError(
+    "ChatGPT reported 'Selected model is at capacity. Please try a different model.' "
+    + "Try a different ChatGPT Web model or effort (for example, switch from Pro to Sol/Instant or lower the effort), then retry the same turn.",
+    { status: 503, errorType: "server_error", code: "model_at_capacity", retryable: true },
+  );
+}
+
 // The current UI renders message_length_exceeds_limit as an ordinary response error.
 // Observe only browser-issued submissions from this owned page after Send is activated;
 // an old response, another tab, or a background endpoint cannot classify this turn.
@@ -874,7 +886,16 @@ type SelectedChatGptWebModelMode = ChatGptWebModelMode & {
 };
 
 export async function throwIfChatGptTerminalErrorAlert(scope: ChatGptTextScope): Promise<void> {
+  if (await chatGptModelCapacityAlert(scope).isVisible().catch(() => false)) {
+    throw chatGptModelCapacityError();
+  }
   if (await scope.getByTestId("regenerate-thread-error-button").last().isVisible().catch(() => false)) {
+    // A capacity bubble shares the same retry affordance as other response errors. Prefer the
+    // specific capacity diagnosis when its text is present so callers do not surface a generic
+    // "displayed an error" message that hides the "try a different model" recovery.
+    if (await chatGptModelCapacityAlert(scope).isVisible().catch(() => false)) {
+      throw chatGptModelCapacityError();
+    }
     throw new ChatGptWebAdapterError(
       "ChatGPT displayed an error for this response. Check the ChatGPT tab for the exact error, then retry the turn.",
       { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
