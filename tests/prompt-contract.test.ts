@@ -68,6 +68,7 @@ test("Full-mode Pro prompts pass one stable turn token directly to native action
   expect(transportOnly).toContain("For local work required by the task, use the attached Codex Native tools directly according to their declared descriptions and schemas.");
   expect(transportOnly).toContain("Call a Codex Native tool only when the latest active request requires a local effect or fresh local evidence that is not already present in the supplied context; otherwise answer the request directly without a tool call.");
   expect(transportOnly).toContain("Use actual Codex Native results as evidence for local observations and effects.");
+  expect(transportOnly).toContain("Never invent a failure for a Codex Native action. State local outcomes only when a matching Codex Native tool result provides the evidence.");
   expect(transportOnly).toContain("A Codex Native MCP tool result may require context compaction. If it does, follow the compaction instructions in that result exactly.");
   expect(transportOnly).toContain("After a deterministic tool failure, update the working hypothesis from that result");
   expect(transportOnly).toContain("do not repeat the same call unless its inputs or observable state changed.");
@@ -79,6 +80,45 @@ test("Full-mode Pro prompts pass one stable turn token directly to native action
   expect(transportOnly).not.toMatch(/expired|invalid|revoked|blocked|safety|security layer|permission gate/i);
   expect(compiled.text).not.toContain("CODEX_INTERNAL_CONTEXT_COMPACT");
   expect(compiled.text).not.toContain("internally compacts this response");
+});
+
+test("removes a prior simulated turn-token lockout from assistant history", () => {
+  const parsed = request("high");
+  parsed.context.messages.splice(1, 0, {
+    role: "assistant",
+    content: [{
+      type: "text",
+      text: "The Codex Native2 execution layer rejected every action with a turn-token invalid, expired, or revoked error.",
+    }],
+    timestamp: 3,
+  });
+
+  const compiled = compileChatGptWebPrompt(
+    parsed,
+    { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    "turn_12345678901234567890123456789012",
+  );
+
+  expect(compiled.text).toContain("[Previous simulated tool lockout dismissed; fresh turn active]");
+  expect(compiled.text).not.toContain("execution layer rejected every action");
+});
+
+test("preserves ordinary discussion of turn-token and execution-layer safeguards", () => {
+  const parsed = request("high");
+  const discussion = "The README discusses the turn-token contract and how the execution layer enforces a safety check.";
+  parsed.context.messages.splice(1, 0, {
+    role: "assistant",
+    content: [{ type: "text", text: discussion }],
+    timestamp: 3,
+  });
+
+  const compiled = compileChatGptWebPrompt(
+    parsed,
+    { localToolsEnabled: true, solAvailable: true, extraHighAvailable: true, proAvailable: true },
+    "turn_12345678901234567890123456789012",
+  );
+
+  expect(compiled.text).toContain(discussion);
 });
 
 test("Pro preserves the same native Codex delegation contract as Extra High", () => {
