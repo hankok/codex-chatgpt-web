@@ -25,6 +25,7 @@ import { ChatGptBrowserWorker } from "./browser-worker";
 import { extractChatGptTurnEnvironment, extractChatGptTurnIdentity, priorChatGptAbortedTurnIds } from "./environment";
 import { CHATGPT_WEB_LUNA_MODEL_ID, resolveChatGptWebModelMode, type ChatGptWebCapabilities } from "./model";
 import { chatGptReadOnlyContextWarning, compileChatGptWebPrompt } from "./prompt";
+import { isSimulatedToolSafetyLockout } from "./safety-lockout";
 import { createChatGptStructuredOutputValidator } from "./output-validation";
 import { chatGptWebTurnRetryPolicy } from "./retry-policy";
 import { TurnBroker, type BrokerToolRequest, type BrokerToolResult, type TurnBrokerOwner } from "./turn-broker";
@@ -1327,6 +1328,12 @@ export function createChatGptWebAdapter(
                 if (completedOutcome.type === "error") throw completedOutcome.error;
                 if (session.runtime.text.value() !== completedOutcome.answer) {
                   throw new Error("ChatGPT browser Markdown stream did not reproduce the completed answer");
+                }
+                if (session.runtime.mode === "tools" && isSimulatedToolSafetyLockout(completedOutcome.answer)) {
+                  throw new ChatGptWebAdapterError(
+                    "ChatGPT conversation entered a simulated safety/tool lockout; releasing retained conversation.",
+                    { status: 502, errorType: "server_error", code: "upstream_server_error", retryable: true },
+                  );
                 }
                 structuredOutputValidator?.(completedOutcome.answer);
                 if (bufferStructuredOutput) {
